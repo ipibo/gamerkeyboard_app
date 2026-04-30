@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Upload Video</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        min-height: 100vh;
+        background: #fff;
+        color: #000;
+        font-family: franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 16px;
+      }
+      a.back {
+        color: #000;
+        text-decoration: underline;
+        font-size: 0.85rem;
+      }
+      a.back:hover {
+        color: #0000ff;
+      }
+      h1 {
+        font-size: 1.4rem;
+        color: #000;
+        text-align: center;
+      }
+      .main-content {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 16px;
+        flex: 1;
+        min-height: 0;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #000;
+        border-radius: 0;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow-y: auto;
+      }
+      label {
+        font-size: 0.85rem;
+        color: #000;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      input[type="file"],
+      input[type="range"] {
+        cursor: pointer;
+      }
+      input[type="range"] {
+        width: 100%;
+        accent-color: #0000ff;
+      }
+      .brightness-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brightness-row input {
+        flex: 1;
+      }
+      #brightness-val {
+        min-width: 2ch;
+        text-align: right;
+      }
+      button[type="submit"] {
+        background: #0000ff;
+        color: #fff;
+        border: none;
+        padding: 12px;
+        border-radius: 0;
+        font-family: inherit;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button[type="submit"]:hover {
+        background: #000;
+      }
+      button[type="submit"]:disabled {
+        background: #ccc;
+        color: #666;
+        cursor: not-allowed;
+      }
+      #progress-wrap {
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+      }
+      progress {
+        width: 100%;
+        height: 12px;
+        accent-color: #0000ff;
+        border-radius: 0;
+      }
+      #progress-label {
+        font-size: 0.8rem;
+        color: #666;
+      }
+      #result {
+        font-size: 0.9rem;
+      }
+      #result.ok {
+        color: #007700;
+      }
+      #result.err {
+        color: #cc0000;
+      }
+      .preview-area {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        height: 100%;
+        overflow: hidden;
+      }
+      .preview-box {
+        border: 1px solid #000;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .preview-box h3 {
+        font-size: 0.9rem;
+        color: #0000ff;
+      }
+      .preview-content {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: auto;
+        background: #f0f0f0;
+        border-radius: 0;
+      }
+      canvas {
+        max-width: 100%;
+        max-height: 100%;
+        display: block;
+        image-rendering: pixelated;
+      }
+      #frame-preview {
+        max-width: 100%;
+        max-height: 100%;
+        display: block;
+        object-fit: contain;
+      }
+      ::selection { color: #fff; background: #000; }
+    </style>
+  </head>
+  <body>
+    <a class="back" href="/">&#8592; Home</a>
+    <h1>Upload Video & Preview</h1>
+    <div class="main-content">
+      <div class="card">
+        <form id="upload-form" enctype="multipart/form-data">
+          <label>
+            Video file
+            <input type="file" name="video" accept="video/*" required />
+          </label>
+          <label>
+            Brightness (1–31)
+            <div class="brightness-row">
+              <input
+                type="range"
+                name="brightness"
+                id="brightness"
+                min="1"
+                max="31"
+                value="1"
+              />
+              <span id="brightness-val">1</span>
+            </div>
+            <div id="brightness-warning" style="display:none;color:#e67e22;font-size:0.85em;margin-top:4px;">
+              ⚠ Brightness &gt; 1 — set to 1 for hardware testing
+            </div>
+          </label>
+          <button type="submit">Render</button>
+        </form>
+        <div id="progress-wrap">
+          <progress id="progress-bar" value="0" max="100"></progress>
+          <span id="progress-label">Starting…</span>
+        </div>
+        <span id="result"></span>
+      </div>
+
+      <div class="preview-area">
+        <div class="preview-box">
+          <h3>First Frame with Keyboards</h3>
+          <div class="preview-content">
+            <canvas id="frame-preview" style="display: none"></canvas>
+            <span id="frame-status">Upload a video to see preview</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="upload.js"></script>
+  </body>
+</html>

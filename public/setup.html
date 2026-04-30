@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Keyboard Setup</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: #fff;
+        color: #000;
+        font-family: franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
+      }
+      #toolbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 52px;
+        background: #fff;
+        border-bottom: 1px solid #000;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+        z-index: 10;
+      }
+      #toolbar a {
+        color: #000;
+        text-decoration: underline;
+        font-size: 0.85rem;
+      }
+      #toolbar a:hover {
+        color: #0000ff;
+      }
+      select,
+      button {
+        background: #fff;
+        color: #000;
+        border: 1px solid #000;
+        padding: 6px 12px;
+        border-radius: 0;
+        font-family: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #0000ff;
+        color: #0000ff;
+      }
+      #save-btn {
+        background: #0000ff;
+        border-color: #0000ff;
+        color: #fff;
+        margin-left: auto;
+      }
+      #save-btn:hover {
+        background: #000;
+        border-color: #000;
+      }
+      #status {
+        font-size: 0.8rem;
+        color: #666;
+      }
+      #canvas-wrap {
+        margin-top: 52px;
+        overflow: auto;
+      }
+      canvas {
+        display: block;
+        cursor: crosshair;
+      }
+      ::selection { color: #fff; background: #000; }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <a href="/">&#8592; Home</a>
+      <select id="layout-select">
+        <option value="">Loading layouts…</option>
+      </select>
+      <button id="add-btn">Add keyboard</button>
+      <button id="remove-btn">Remove selected</button>
+      <div style="display: flex; gap: 12px; margin-left: 12px">
+        <label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+          "
+        >
+          W:
+          <input
+            type="number"
+            id="kb-width"
+            min="50"
+            max="400"
+            value="100"
+            style="
+              width: 50px;
+              padding: 4px;
+              background: #fff;
+              color: #000;
+              border: 1px solid #000;
+              border-radius: 0;
+            "
+          />
+        </label>
+        <label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.85rem;
+          "
+        >
+          H:
+          <input
+            type="number"
+            id="kb-height"
+            min="50"
+            max="300"
+            value="100"
+            style="
+              width: 50px;
+              padding: 4px;
+              background: #fff;
+              color: #000;
+              border: 1px solid #000;
+              border-radius: 0;
+            "
+          />
+        </label>
+      </div>
+      <span id="status"></span>
+      <button id="save-btn">Save layout</button>
+    </div>
+    <div id="canvas-wrap">
+      <canvas id="canvas" width="1400" height="600"></canvas>
+    </div>
+    <script src="setup.js"></script>
+  </body>
+</html>
