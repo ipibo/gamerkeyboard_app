@@ -18,6 +18,7 @@ RGB Keyboard App is a Node.js + vanilla JS web app that:
 - Server: Express
 - Upload handling: express-fileupload
 - Image/frame processing: ffmpeg-extract-frames, ffmpeg-probe, Jimp
+- Body parsing: body-parser
 - Frontend: static HTML/CSS/JS in `public/` (no framework)
 
 ## Run Commands
@@ -39,6 +40,8 @@ RGB Keyboard App is a Node.js + vanilla JS web app that:
   - `output/layoutConfig.json`
   - `output/videoFile.txt`
 - Upload/temp area: `upload/` (plus temporary folders created during processing)
+- Pi player (C): `pi_video_player.c`
+- Layout conversion tool: `tools/pos-to-json.js` (converts `.pos` files to layout JSON)
 
 ## API Surface (Current)
 
