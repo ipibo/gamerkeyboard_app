@@ -22,6 +22,52 @@ function makefolder(dir) {
 makefolder(OUTPUT_DIR)
 makefolder(UPLOAD_DIR)
 
+let previewCache = null
+
+function countLines(filePath) {
+  return new Promise((resolve, reject) => {
+    let n = 0
+    const rl = require("readline").createInterface({
+      input: fs.createReadStream(filePath),
+      crlfDelay: Infinity,
+    })
+    rl.on("line", () => n++)
+    rl.on("close", () => resolve(n))
+    rl.on("error", reject)
+  })
+}
+
+function readFrameLines(filePath, startLine, count) {
+  return new Promise((resolve, reject) => {
+    const lines = []
+    let lineNum = 0
+    const rl = require("readline").createInterface({
+      input: fs.createReadStream(filePath),
+      crlfDelay: Infinity,
+    })
+    rl.on("line", (line) => {
+      if (lineNum >= startLine && lineNum < startLine + count) lines.push(line)
+      if (lineNum >= startLine + count) rl.close()
+      lineNum++
+    })
+    rl.on("close", () => resolve(lines))
+    rl.on("error", reject)
+  })
+}
+
+function decodeFrame(frameStr, ledCount) {
+  const rgb = []
+  for (let i = 0; i < ledCount; i++) {
+    const o = i * 32
+    rgb.push(
+      parseInt(frameStr.slice(o + 24, o + 32), 2),
+      parseInt(frameStr.slice(o + 16, o + 24), 2),
+      parseInt(frameStr.slice(o + 8, o + 16), 2),
+    )
+  }
+  return rgb
+}
+
 app.use(express.static(path.join(__dirname, "public")))
 app.use(bodyParser.urlencoded({ extended: false }))
 app.use(bodyParser.json())
@@ -165,6 +211,7 @@ app.post("/api/renderVideo", async (req, res) => {
   await req.files.video.mv(videoPath)
 
   renderState = null
+  previewCache = null
 
   res.json({ ok: true, message: "render started" })
 
@@ -234,6 +281,73 @@ app.post("/api/extractFirstFrame", async (req, res) => {
     res.json({ ok: true, data: `data:image/png;base64,${base64}` })
   } catch (err) {
     console.error("first frame extraction error:", err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get("/preview", (req, res) =>
+  res.sendFile(path.join(__dirname, "public/preview.html")),
+)
+
+app.get("/api/preview/info", async (req, res) => {
+  try {
+    if (!fs.existsSync(COORDS_PATH))
+      return res.json({ ready: false, reason: "No coords saved — set up keyboard layout first" })
+    if (!fs.existsSync(OUTPUT_BIN))
+      return res.json({ ready: false, reason: "No video rendered yet" })
+
+    const cStat = fs.statSync(COORDS_PATH)
+    const vStat = fs.statSync(OUTPUT_BIN)
+    if (
+      previewCache &&
+      previewCache.coordsMtime === cStat.mtimeMs &&
+      previewCache.videoMtime === vStat.mtimeMs
+    ) {
+      return res.json({ ready: true, ...previewCache })
+    }
+
+    const rawCoords = fs.readFileSync(COORDS_PATH, "utf8").trim().split("\n")
+    const coords = rawCoords.map((line) => {
+      const [x, y] = line.trim().split(/\s+/).map(Number)
+      return [x, y]
+    })
+    const totalLines = await countLines(OUTPUT_BIN)
+    const frameCount = Math.max(0, totalLines - 2)
+
+    previewCache = {
+      coords,
+      frameCount,
+      ledCount: coords.length,
+      coordsMtime: cStat.mtimeMs,
+      videoMtime: vStat.mtimeMs,
+    }
+    res.json({ ready: true, ...previewCache })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get("/api/preview/frames", async (req, res) => {
+  try {
+    const start = Math.max(0, parseInt(req.query.start) || 0)
+    const count = Math.min(100, Math.max(1, parseInt(req.query.count) || 50))
+
+    if (!previewCache) {
+      if (!fs.existsSync(OUTPUT_BIN))
+        return res.status(404).json({ error: "video not rendered" })
+      return res.status(400).json({ error: "call /api/preview/info first" })
+    }
+
+    const { ledCount, frameCount } = previewCache
+    if (!ledCount) return res.json({ start, frames: [] })
+
+    const clampedCount = Math.min(count, frameCount - start)
+    if (clampedCount <= 0) return res.json({ start, frames: [] })
+
+    const rawLines = await readFrameLines(OUTPUT_BIN, start + 1, clampedCount)
+    const frames = rawLines.map((line) => decodeFrame(line, ledCount))
+    res.json({ start, frames })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })

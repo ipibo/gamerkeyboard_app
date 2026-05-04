@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LED Preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      height: 100vh;
+      background: #000;
+      color: #fff;
+      font-family: franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
+      overflow: hidden;
+    }
+    ::selection { color: #fff; background: #000; }
+
+    #toolbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 52px;
+      background: #111;
+      border-bottom: 1px solid #333;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 16px;
+      z-index: 10;
+    }
+    #toolbar a {
+      color: #fff;
+      text-decoration: underline;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    #toolbar a:hover { color: #0000ff; }
+
+    .sep {
+      width: 1px;
+      height: 24px;
+      background: #333;
+      flex-shrink: 0;
+    }
+
+    button {
+      background: #111;
+      color: #fff;
+      border: 1px solid #555;
+      padding: 5px 12px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    button:hover { border-color: #0000ff; color: #0000ff; }
+    button.active { background: #0000ff; border-color: #0000ff; color: #fff; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    label {
+      font-size: 0.8rem;
+      color: #aaa;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    input[type="range"] { accent-color: #0000ff; cursor: pointer; }
+
+    select {
+      background: #111;
+      color: #fff;
+      border: 1px solid #555;
+      padding: 4px 6px;
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    select:hover { border-color: #0000ff; }
+
+    #status-text {
+      font-size: 0.8rem;
+      color: #666;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
+    #canvas-wrap {
+      margin-top: 52px;
+      height: calc(100vh - 52px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    canvas { display: block; }
+
+    #not-ready {
+      display: none;
+      position: fixed;
+      inset: 52px 0 0 0;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      color: #666;
+      font-size: 1rem;
+    }
+    #not-ready.visible { display: flex; }
+    #not-ready a { color: #0000ff; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <a href="/">&#8592; Home</a>
+    <div class="sep"></div>
+
+    <button id="btn-play" disabled>Play</button>
+
+    <label>
+      Frame
+      <input type="range" id="frame-slider" min="0" value="0" step="1" style="width:180px" disabled>
+      <span id="frame-label">0 / 0</span>
+    </label>
+
+    <div class="sep"></div>
+
+    <label>
+      Speed
+      <select id="speed-select">
+        <option value="0.25">0.25×</option>
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+    </label>
+
+    <label>
+      Zoom
+      <input type="range" id="zoom-slider" min="0.5" max="4" step="0.1" value="1" style="width:80px">
+      <span id="zoom-label">1.0×</span>
+    </label>
+
+    <button id="btn-glow" class="active">Glow</button>
+
+    <span id="status-text">Loading…</span>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="preview-canvas"></canvas>
+  </div>
+
+  <div id="not-ready">
+    <span id="not-ready-msg"></span>
+    <a href="/upload">Go render a video first →</a>
+  </div>
+
+  <script src="preview.js"></script>
+</body>
+</html>
