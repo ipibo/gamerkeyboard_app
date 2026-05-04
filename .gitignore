@@ -3,3 +3,4 @@ output/
 upload/
 *.tmp
 .claude/settings.local.json
+plans/
