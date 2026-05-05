@@ -113,6 +113,24 @@ function stopPlayerProcess(signalName = "SIGTERM") {
   })
 }
 
+function countCoordsLines(filePath) {
+  if (!fs.existsSync(filePath)) return 0
+  const raw = fs.readFileSync(filePath, "utf8")
+  return raw.split("\n").filter((line) => line.trim() !== "").length
+}
+
+function buildBlackoutFileContent(ledCount) {
+  const startFrame = "0".repeat(32)
+  const endFrame = "1".repeat(32)
+  if (ledCount < 1) {
+    return `${startFrame}\n${endFrame}\n`
+  }
+
+  const blackLedBits = "11100010000000000000000000000000"
+  const blackFrame = blackLedBits.repeat(ledCount)
+  return `${startFrame}\n${blackFrame}\n${endFrame}\n`
+}
+
 function sendBlackoutFrame() {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(PLAYER_BINARY_PATH)) {
@@ -129,18 +147,35 @@ function sendBlackoutFrame() {
       return
     }
 
-    const blackoutFps = readPlayerFps()
+    const ledCountBus0 = fs.existsSync(COORDS_BUS0)
+      ? countCoordsLines(COORDS_BUS0)
+      : countCoordsLines(COORDS_PATH)
+    const ledCountBus1 = countCoordsLines(COORDS_BUS1)
+
+    const blackoutBus0Path = path.join(OUTPUT_DIR, "blackout_bus0.txt")
+    const blackoutBus1Path = path.join(OUTPUT_DIR, "blackout_bus1.txt")
+    fs.writeFileSync(blackoutBus0Path, buildBlackoutFileContent(ledCountBus0))
+    fs.writeFileSync(blackoutBus1Path, buildBlackoutFileContent(ledCountBus1))
+
+    const blackoutFps = Math.max(30, readPlayerFps())
     const blackoutArgs = [
-      OUTPUT_BIN_BUS0,
-      OUTPUT_BIN_BUS1,
+      blackoutBus0Path,
+      blackoutBus1Path,
       String(blackoutFps),
-      "--black-once",
     ]
 
     const blackoutProcess = spawn(PLAYER_BINARY_PATH, blackoutArgs, {
       cwd: __dirname,
       stdio: ["ignore", "ignore", "pipe"],
     })
+
+    const blackoutKillTimer = setTimeout(() => {
+      try {
+        blackoutProcess.kill("SIGTERM")
+      } catch {
+        // ignore kill race; close handler resolves/rejects outcome.
+      }
+    }, 150)
 
     let stderrText = ""
     if (blackoutProcess.stderr) {
@@ -150,11 +185,13 @@ function sendBlackoutFrame() {
     }
 
     blackoutProcess.on("error", (spawnError) => {
+      clearTimeout(blackoutKillTimer)
       reject(new Error(`Blackout process error: ${spawnError.message}`))
     })
 
-    blackoutProcess.on("close", (exitCode) => {
-      if (exitCode === 0) {
+    blackoutProcess.on("close", (exitCode, signalName) => {
+      clearTimeout(blackoutKillTimer)
+      if (exitCode === 0 || signalName === "SIGTERM") {
         resolve(true)
         return
       }
@@ -410,9 +447,26 @@ app.post("/api/player/start", async (req, res) => {
 
 app.post("/api/player/stop", async (req, res) => {
   if (playerProcess) {
-    const stopped = await stopPlayerProcess("SIGUSR1")
-    playerState = "stopped"
-    return res.json({ ok: true, state: playerState, stopped, blackSent: true })
+    const stopped = await stopPlayerProcess("SIGTERM")
+    try {
+      await sendBlackoutFrame()
+      playerState = "stopped"
+      return res.json({
+        ok: true,
+        state: playerState,
+        stopped,
+        blackSent: true,
+      })
+    } catch (blackoutError) {
+      playerState = "stopped"
+      return res.status(500).json({
+        ok: false,
+        state: playerState,
+        stopped,
+        blackSent: false,
+        error: blackoutError.message,
+      })
+    }
   }
 
   try {
