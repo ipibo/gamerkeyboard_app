@@ -76,6 +76,30 @@ static void spiSetup(int speed)
   }
 }
 
+static void sendBuffers(BusState *bus0State, BusState *bus1State)
+{
+  pthread_t threads[NUM_SPI_BUS];
+  SpiThreadArgs threadArgs[NUM_SPI_BUS];
+
+  threadArgs[0].bus = SPI_BUSES[0];
+  threadArgs[0].spiData = bus0State->spiBuffer;
+  threadArgs[0].spiDataLen = bus0State->spiBufferBytes;
+
+  threadArgs[1].bus = SPI_BUSES[1];
+  threadArgs[1].spiData = bus1State->spiBuffer;
+  threadArgs[1].spiDataLen = bus1State->spiBufferBytes;
+
+  for (int busIdx = 0; busIdx < NUM_SPI_BUS; busIdx++)
+  {
+    pthread_create(&threads[busIdx], NULL, sendSpi, &threadArgs[busIdx]);
+  }
+
+  for (int busIdx = 0; busIdx < NUM_SPI_BUS; busIdx++)
+  {
+    pthread_join(threads[busIdx], NULL);
+  }
+}
+
 static long timeDiffMicroseconds(struct timespec start, struct timespec end)
 {
   return (end.tv_sec - start.tv_sec) * 1000000L + (end.tv_nsec - start.tv_nsec) / 1000L;
@@ -154,6 +178,25 @@ static int decodeFrameLineToBuffer(const char *frameLine, BusState *busState)
       NUM_END_FRAME_BYTE);
 
   return 0;
+}
+
+static void buildBlackFrame(BusState *busState)
+{
+  memcpy(busState->spiBuffer, busState->startFrame, NUM_START_FRAME_BYTE);
+
+  for (size_t ledIndex = 0; ledIndex < busState->ledCount; ledIndex++)
+  {
+    size_t byteOffset = NUM_START_FRAME_BYTE + (ledIndex * NUM_BYTE_PER_LED);
+    busState->spiBuffer[byteOffset + 0] = GLOBAL_BYTE;
+    busState->spiBuffer[byteOffset + 1] = 0x00;
+    busState->spiBuffer[byteOffset + 2] = 0x00;
+    busState->spiBuffer[byteOffset + 3] = 0x00;
+  }
+
+  memcpy(
+      busState->spiBuffer + busState->spiBufferBytes - NUM_END_FRAME_BYTE,
+      busState->endFrame,
+      NUM_END_FRAME_BYTE);
 }
 
 /* Reads the next video frame line into busState->lineBuf, skipping delimiter
@@ -280,6 +323,7 @@ int main(int argc, char **argv)
   const char *bus0FilePath = (argc > 1) ? argv[1] : "videoFile_bus0.txt";
   const char *bus1FilePath = (argc > 2) ? argv[2] : "videoFile_bus1.txt";
   int targetFps = (argc > 3) ? atoi(argv[3]) : 30;
+  int blackOnce = (argc > 4 && strcmp(argv[4], "--black-once") == 0) ? 1 : 0;
   if (targetFps < 1)
   {
     targetFps = 30;
@@ -288,8 +332,6 @@ int main(int argc, char **argv)
 
   BusState bus0State;
   BusState bus1State;
-  pthread_t threads[NUM_SPI_BUS];
-  SpiThreadArgs threadArgs[NUM_SPI_BUS];
   struct timespec frameStart;
   struct timespec frameEnd;
 
@@ -305,6 +347,14 @@ int main(int argc, char **argv)
 
   wiringPiSetup();
   spiSetup(SPI_MHZ * 1000000);
+
+  if (blackOnce)
+  {
+    buildBlackFrame(&bus0State);
+    buildBlackFrame(&bus1State);
+    sendBuffers(&bus0State, &bus1State);
+    keepRunning = 0;
+  }
 
   while (keepRunning)
   {
@@ -334,23 +384,7 @@ int main(int argc, char **argv)
       }
     }
 
-    threadArgs[0].bus = SPI_BUSES[0];
-    threadArgs[0].spiData = bus0State.spiBuffer;
-    threadArgs[0].spiDataLen = bus0State.spiBufferBytes;
-
-    threadArgs[1].bus = SPI_BUSES[1];
-    threadArgs[1].spiData = bus1State.spiBuffer;
-    threadArgs[1].spiDataLen = bus1State.spiBufferBytes;
-
-    for (int busIdx = 0; busIdx < NUM_SPI_BUS; busIdx++)
-    {
-      pthread_create(&threads[busIdx], NULL, sendSpi, &threadArgs[busIdx]);
-    }
-
-    for (int busIdx = 0; busIdx < NUM_SPI_BUS; busIdx++)
-    {
-      pthread_join(threads[busIdx], NULL);
-    }
+    sendBuffers(&bus0State, &bus1State);
 
     clock_gettime(CLOCK_MONOTONIC, &frameEnd);
     long elapsedUs = timeDiffMicroseconds(frameStart, frameEnd);
@@ -372,6 +406,13 @@ int main(int argc, char **argv)
       int actualFps = (int)(1000000.0 / (double)loopUs);
       fprintf(stdout, "FPS actual=%d target=%d\n", actualFps, targetFps);
     }
+  }
+
+  if (!blackOnce)
+  {
+    buildBlackFrame(&bus0State);
+    buildBlackFrame(&bus1State);
+    sendBuffers(&bus0State, &bus1State);
   }
 
   free(bus0State.lineBuf);

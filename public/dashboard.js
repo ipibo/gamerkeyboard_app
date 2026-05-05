@@ -7,6 +7,7 @@ const startButton = document.getElementById("start-btn")
 const stopButton = document.getElementById("stop-btn")
 const pauseButton = document.getElementById("pause-btn")
 const resumeButton = document.getElementById("resume-btn")
+const blackoutButton = document.getElementById("blackout-btn")
 
 function setMessage(text, type) {
   messageEl.textContent = text || ""
@@ -72,6 +73,9 @@ pauseButton.addEventListener("click", () =>
 )
 resumeButton.addEventListener("click", () =>
   runAction("/api/player/resume", "Resume"),
+)
+blackoutButton.addEventListener("click", () =>
+  runAction("/api/player/black", "Blackout"),
 )
 
 refreshStatus()

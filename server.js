@@ -113,6 +113,63 @@ function stopPlayerProcess(signalName = "SIGTERM") {
   })
 }
 
+function sendBlackoutFrame() {
+  return new Promise((resolve, reject) => {
+    if (!fs.existsSync(PLAYER_BINARY_PATH)) {
+      reject(
+        new Error(
+          "Player binary missing — compile pi_video_player_two_busses first",
+        ),
+      )
+      return
+    }
+
+    if (!fs.existsSync(OUTPUT_BIN_BUS0) || !fs.existsSync(OUTPUT_BIN_BUS1)) {
+      reject(new Error("Rendered bus files missing — render a video first"))
+      return
+    }
+
+    const blackoutFps = readPlayerFps()
+    const blackoutArgs = [
+      OUTPUT_BIN_BUS0,
+      OUTPUT_BIN_BUS1,
+      String(blackoutFps),
+      "--black-once",
+    ]
+
+    const blackoutProcess = spawn(PLAYER_BINARY_PATH, blackoutArgs, {
+      cwd: __dirname,
+      stdio: ["ignore", "ignore", "pipe"],
+    })
+
+    let stderrText = ""
+    if (blackoutProcess.stderr) {
+      blackoutProcess.stderr.on("data", (chunk) => {
+        stderrText += chunk.toString()
+      })
+    }
+
+    blackoutProcess.on("error", (spawnError) => {
+      reject(new Error(`Blackout process error: ${spawnError.message}`))
+    })
+
+    blackoutProcess.on("close", (exitCode) => {
+      if (exitCode === 0) {
+        resolve(true)
+        return
+      }
+      const details = stderrText.trim()
+      reject(
+        new Error(
+          details
+            ? `Blackout failed: ${details}`
+            : `Blackout failed with exit code ${exitCode}`,
+        ),
+      )
+    })
+  })
+}
+
 async function startPlayerProcess({ forceRestart = false } = {}) {
   if (!fs.existsSync(PLAYER_BINARY_PATH)) {
     throw new Error(
@@ -352,8 +409,37 @@ app.post("/api/player/start", async (req, res) => {
 
 app.post("/api/player/stop", async (req, res) => {
   const stopped = await stopPlayerProcess("SIGTERM")
+  try {
+    await sendBlackoutFrame()
+    playerState = "stopped"
+    res.json({ ok: true, state: playerState, stopped, blackSent: true })
+  } catch (blackoutError) {
+    playerState = "stopped"
+    res.status(500).json({
+      ok: false,
+      state: playerState,
+      stopped,
+      blackSent: false,
+      error: blackoutError.message,
+    })
+  }
+})
+
+app.post("/api/player/black", async (req, res) => {
+  await stopPlayerProcess("SIGTERM")
   playerState = "stopped"
-  res.json({ ok: true, state: playerState, stopped })
+
+  try {
+    await sendBlackoutFrame()
+    res.json({ ok: true, state: playerState, blackSent: true })
+  } catch (blackoutError) {
+    res.status(500).json({
+      ok: false,
+      state: playerState,
+      blackSent: false,
+      error: blackoutError.message,
+    })
+  }
 })
 
 app.post("/api/player/pause", (req, res) => {
