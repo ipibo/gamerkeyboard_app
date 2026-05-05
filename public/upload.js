@@ -8,11 +8,23 @@ const resultEl = document.getElementById("result")
 const framePreview = document.getElementById("frame-preview")
 const frameStatus = document.getElementById("frame-status")
 const videoInput = form.querySelector('input[name="video"]')
+const renderButton = form.querySelector('button[type="submit"]')
+const renderHint = document.getElementById("render-hint")
 
 const KEY_RADIUS = 3
 const COLORS = ["#9c41f2", "#f241a0", "#41a0f2", "#f2c841", "#41f280"]
 
 console.log("upload.js loaded")
+
+// Rendering is only allowed after a valid first-frame preview is available.
+function setRenderButtonState(disabled, hintText = "") {
+  renderButton.disabled = disabled
+  if (!renderHint) return
+  renderHint.textContent = hintText
+  renderHint.style.display = disabled && hintText ? "block" : "none"
+}
+
+setRenderButtonState(true, "Preview required before rendering")
 
 let previewState = {
   config: null,
@@ -22,8 +34,8 @@ let previewState = {
   dragStartLx: 0,
   dragStartLy: 0,
   dragStartOffsets: [],
-  keyboardOffsets: [],  // [{offsetX, offsetY}] — mutable, draggable as a group
-  layoutKeys: [],       // [[[x,y],...]] — key positions per keyboard from layout data
+  keyboardOffsets: [], // [{offsetX, offsetY}] — mutable, draggable as a group
+  layoutKeys: [], // [[[x,y],...]] — key positions per keyboard from layout data
 }
 
 // Convert CSS-pixel coords (relative to canvas element) to canvas/layout coords
@@ -34,16 +46,14 @@ function screenToLayout(sx, sy) {
   const w = framePreview.width
   const h = framePreview.height
   const { zoom } = previewState
-  return [
-    (cx - w / 2) / zoom + w / 2,
-    (cy - h / 2) / zoom + h / 2,
-  ]
+  return [(cx - w / 2) / zoom + w / 2, (cy - h / 2) / zoom + h / 2]
 }
 
 function redrawPreview() {
   if (!previewState.tempCanvas) return
 
-  const { config, tempCanvas, panX, panY, zoom, keyboardOffsets, layoutKeys } = previewState
+  const { config, tempCanvas, panX, panY, zoom, keyboardOffsets, layoutKeys } =
+    previewState
   const ctx = framePreview.getContext("2d")
   const w = framePreview.width
   const h = framePreview.height
@@ -131,7 +141,10 @@ framePreview.addEventListener("wheel", (e) => {
   if (!previewState.config) return
   e.preventDefault()
   const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
-  previewState.zoom = Math.max(0.1, Math.min(10, previewState.zoom * zoomFactor))
+  previewState.zoom = Math.max(
+    0.1,
+    Math.min(10, previewState.zoom * zoomFactor),
+  )
   redrawPreview()
 })
 
@@ -143,7 +156,9 @@ framePreview.addEventListener("mousedown", (e) => {
   previewState.isDragging = true
   previewState.dragStartLx = lx
   previewState.dragStartLy = ly
-  previewState.dragStartOffsets = previewState.keyboardOffsets.map((o) => ({ ...o }))
+  previewState.dragStartOffsets = previewState.keyboardOffsets.map((o) => ({
+    ...o,
+  }))
   framePreview.style.cursor = "grabbing"
 })
 
@@ -169,7 +184,8 @@ const brightnessWarning = document.getElementById("brightness-warning")
 
 brightnessInput.addEventListener("input", () => {
   brightnessVal.textContent = brightnessInput.value
-  brightnessWarning.style.display = parseInt(brightnessInput.value) > 1 ? "block" : "none"
+  brightnessWarning.style.display =
+    parseInt(brightnessInput.value) > 1 ? "block" : "none"
 })
 
 // Handle video file selection for frame extraction
@@ -179,10 +195,13 @@ videoInput.addEventListener("change", async (e) => {
     framePreview.style.display = "none"
     frameStatus.style.display = "block"
     frameStatus.textContent = "Upload a video to see preview"
+    setRenderButtonState(true, "Preview required before rendering")
     return
   }
 
+  setRenderButtonState(true, "Extracting first frame before rendering")
   frameStatus.style.display = "none"
+  frameStatus.style.color = ""
 
   try {
     const [layoutRes, layoutsRes] = await Promise.all([
@@ -196,9 +215,13 @@ videoInput.addEventListener("change", async (e) => {
     frameStatus.style.display = "block"
     const frameFormData = new FormData()
     frameFormData.append("video", file)
-    const frameRes = await fetch("/api/extractFirstFrame", { method: "POST", body: frameFormData })
+    const frameRes = await fetch("/api/extractFirstFrame", {
+      method: "POST",
+      body: frameFormData,
+    })
     const frameData = await frameRes.json()
-    if (!frameRes.ok || frameData.error) throw new Error(frameData.error || "frame extraction failed")
+    if (!frameRes.ok || frameData.error)
+      throw new Error(frameData.error || "frame extraction failed")
     frameStatus.style.display = "none"
 
     const tempCanvas = document.createElement("canvas")
@@ -220,7 +243,8 @@ videoInput.addEventListener("change", async (e) => {
     if (config.keyboards && config.keyboards.length > 0) {
       // Scale keyboard positions from setup-canvas space to video-pixel space
       const scaleX = tempCanvas.width / (config.canvasWidth || tempCanvas.width)
-      const scaleY = tempCanvas.height / (config.canvasHeight || tempCanvas.height)
+      const scaleY =
+        tempCanvas.height / (config.canvasHeight || tempCanvas.height)
 
       previewState.keyboardOffsets = config.keyboards.map((kb) => ({
         offsetX: kb.offsetX * scaleX,
@@ -228,7 +252,9 @@ videoInput.addEventListener("change", async (e) => {
       }))
       previewState.layoutKeys = config.keyboards.map((kb) => {
         const layout = allLayouts.find((l) => l.id === kb.layoutId)
-        return layout ? layout.keys.map(([kx, ky]) => [kx * scaleX, ky * scaleY]) : []
+        return layout
+          ? layout.keys.map(([kx, ky]) => [kx * scaleX, ky * scaleY])
+          : []
       })
       previewState.config = config
     }
@@ -238,11 +264,13 @@ videoInput.addEventListener("change", async (e) => {
 
     redrawPreview()
     framePreview.style.display = "block"
+    setRenderButtonState(false)
   } catch (err) {
     console.error("Error:", err)
     frameStatus.textContent = `Error: ${err.message}`
     frameStatus.style.color = "#f55"
     frameStatus.style.display = "block"
+    setRenderButtonState(true, "Preview failed - upload a valid video")
   }
 })
 
@@ -252,7 +280,11 @@ form.addEventListener("submit", async (e) => {
   const formData = new FormData(form)
 
   // Send per-bus video-pixel coords derived from the (possibly adjusted) preview state
-  if (previewState.config && previewState.keyboardOffsets.length > 0 && previewState.layoutKeys.length > 0) {
+  if (
+    previewState.config &&
+    previewState.keyboardOffsets.length > 0 &&
+    previewState.layoutKeys.length > 0
+  ) {
     const coordsBus0 = []
     const coordsBus1 = []
     previewState.keyboardOffsets.forEach(({ offsetX, offsetY }, i) => {
@@ -263,13 +295,19 @@ form.addEventListener("submit", async (e) => {
     })
     formData.append("coordsBus0", JSON.stringify(coordsBus0))
     formData.append("coordsBus1", JSON.stringify(coordsBus1))
-    console.log("coords override: bus0=", coordsBus0.length, "bus1=", coordsBus1.length, "LEDs")
+    console.log(
+      "coords override: bus0=",
+      coordsBus0.length,
+      "bus1=",
+      coordsBus1.length,
+      "LEDs",
+    )
   }
 
   progressWrap.style.display = "flex"
   progressBar.value = 0
   progressLabel.textContent = "Uploading…"
-  form.querySelector("button").disabled = true
+  setRenderButtonState(true, "Rendering in progress")
 
   let sse = null
 
@@ -282,7 +320,7 @@ form.addEventListener("submit", async (e) => {
       resultEl.textContent = `Render failed: ${data.error}`
       resultEl.className = "err"
       sse.close()
-      form.querySelector("button").disabled = false
+      setRenderButtonState(false)
       return
     }
 
@@ -297,10 +335,11 @@ form.addEventListener("submit", async (e) => {
     if (data.done) {
       progressBar.value = 100
       progressLabel.textContent = "Done"
-      resultEl.textContent = "videoFile_bus0.txt + videoFile_bus1.txt written successfully"
+      resultEl.textContent =
+        "videoFile_bus0.txt + videoFile_bus1.txt written successfully"
       resultEl.className = "ok"
       sse.close()
-      form.querySelector("button").disabled = false
+      setRenderButtonState(false)
     }
   }
 
@@ -309,7 +348,7 @@ form.addEventListener("submit", async (e) => {
       progressLabel.textContent = "Connection lost"
     }
     sse.close()
-    form.querySelector("button").disabled = false
+    setRenderButtonState(false)
   }
 
   try {
@@ -327,6 +366,6 @@ form.addEventListener("submit", async (e) => {
     progressWrap.style.display = "none"
     resultEl.textContent = `Error: ${err.message}`
     resultEl.className = "err"
-    form.querySelector("button").disabled = false
+    setRenderButtonState(false)
   }
 })

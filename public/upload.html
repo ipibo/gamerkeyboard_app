@@ -14,7 +14,8 @@
         min-height: 100vh;
         background: #fff;
         color: #000;
-        font-family: franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
+        font-family:
+          franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
         display: flex;
         flex-direction: column;
         gap: 16px;
@@ -96,6 +97,12 @@
         color: #666;
         cursor: not-allowed;
       }
+      #render-hint {
+        display: none;
+        font-size: 0.8rem;
+        color: #666;
+        margin-top: 6px;
+      }
       #progress-wrap {
         display: none;
         flex-direction: column;
@@ -162,7 +169,10 @@
         display: block;
         object-fit: contain;
       }
-      ::selection { color: #fff; background: #000; }
+      ::selection {
+        color: #fff;
+        background: #000;
+      }
     </style>
   </head>
   <body>
@@ -188,11 +198,20 @@
               />
               <span id="brightness-val">1</span>
             </div>
-            <div id="brightness-warning" style="display:none;color:#e67e22;font-size:0.85em;margin-top:4px;">
+            <div
+              id="brightness-warning"
+              style="
+                display: none;
+                color: #e67e22;
+                font-size: 0.85em;
+                margin-top: 4px;
+              "
+            >
               ⚠ Brightness &gt; 1 — set to 1 for hardware testing
             </div>
           </label>
           <button type="submit">Render</button>
+          <span id="render-hint">Preview required before rendering</span>
         </form>
         <div id="progress-wrap">
           <progress id="progress-bar" value="0" max="100"></progress>
