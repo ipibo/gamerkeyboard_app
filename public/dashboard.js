@@ -61,10 +61,18 @@ async function runAction(url, actionName) {
   }
 }
 
-startButton.addEventListener("click", () => runAction("/api/player/start", "Start"))
-stopButton.addEventListener("click", () => runAction("/api/player/stop", "Stop"))
-pauseButton.addEventListener("click", () => runAction("/api/player/pause", "Pause"))
-resumeButton.addEventListener("click", () => runAction("/api/player/resume", "Resume"))
+startButton.addEventListener("click", () =>
+  runAction("/api/player/start", "Start"),
+)
+stopButton.addEventListener("click", () =>
+  runAction("/api/player/stop", "Stop"),
+)
+pauseButton.addEventListener("click", () =>
+  runAction("/api/player/pause", "Pause"),
+)
+resumeButton.addEventListener("click", () =>
+  runAction("/api/player/resume", "Resume"),
+)
 
 refreshStatus()
 setInterval(refreshStatus, 2000)

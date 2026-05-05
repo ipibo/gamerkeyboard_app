@@ -20,7 +20,11 @@ function parseFpsValue(rawFps) {
       const [numeratorRaw, denominatorRaw] = rawFps.split("/")
       const numerator = parseFloat(numeratorRaw)
       const denominator = parseFloat(denominatorRaw)
-      if (Number.isFinite(numerator) && Number.isFinite(denominator) && denominator > 0) {
+      if (
+        Number.isFinite(numerator) &&
+        Number.isFinite(denominator) &&
+        denominator > 0
+      ) {
         return numerator / denominator
       }
     }
@@ -42,10 +46,14 @@ async function writeVideoMeta(videoPath, outputDir) {
   try {
     const probeInfo = await probe(videoPath)
     const videoStream = Array.isArray(probeInfo.streams)
-      ? probeInfo.streams.find((streamInfo) => streamInfo.codec_type === "video") || probeInfo.streams[0]
+      ? probeInfo.streams.find(
+          (streamInfo) => streamInfo.codec_type === "video",
+        ) || probeInfo.streams[0]
       : null
 
-    const parsedFps = parseFpsValue(videoStream?.avg_frame_rate) || parseFpsValue(videoStream?.r_frame_rate)
+    const parsedFps =
+      parseFpsValue(videoStream?.avg_frame_rate) ||
+      parseFpsValue(videoStream?.r_frame_rate)
     if (parsedFps) {
       videoFps = parsedFps
     }
@@ -55,7 +63,9 @@ async function writeVideoMeta(videoPath, outputDir) {
       frameCount = parsedFrameCount
     }
   } catch (probeError) {
-    console.warn(`Could not probe video metadata for ${videoPath}: ${probeError.message}`)
+    console.warn(
+      `Could not probe video metadata for ${videoPath}: ${probeError.message}`,
+    )
   }
 
   const metaPath = path.join(outputDir, "meta.json")
@@ -92,14 +102,22 @@ async function analyseFrame(imagePath, coordinatesOfKeys, brightness) {
   const byte0 = 0xe0 | (brightness & 0x1f)
   return coordinatesOfKeys
     .map((c) => {
-      const rgba = Jimp.intToRGBA(image.getPixelColor(Math.round(c[0]), Math.round(c[1])))
+      const rgba = Jimp.intToRGBA(
+        image.getPixelColor(Math.round(c[0]), Math.round(c[1])),
+      )
       const word = (byte0 << 24) | (rgba.b << 16) | (rgba.g << 8) | rgba.r
       return (word >>> 0).toString(2).padStart(32, "0")
     })
     .join("")
 }
 
-async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness, onProgress) {
+async function processVideo(
+  videoPath,
+  coordinatesOfKeys,
+  outputPath,
+  brightness,
+  onProgress,
+) {
   const tmpFolder = path.join(
     path.dirname(outputPath),
     `../tmp_${path.basename(outputPath, path.extname(outputPath))}`,
@@ -111,7 +129,9 @@ async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness
     const out = fs.createWriteStream(outputPath)
     out.write(START_FRAME + "\n")
     out.write(END_FRAME + "\n")
-    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())))
+    await new Promise((resolve, reject) =>
+      out.end((err) => (err ? reject(err) : resolve())),
+    )
     onProgress(0, 0)
     console.log(`Zero LEDs — wrote empty output: ${outputPath}`)
     return
@@ -131,7 +151,9 @@ async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness
     numFrames = countExtractedFrames(tmpFolder)
   }
 
-  console.log(`Processing ${numFrames} frames, ${coordinatesOfKeys.length} LEDs each`)
+  console.log(
+    `Processing ${numFrames} frames, ${coordinatesOfKeys.length} LEDs each`,
+  )
 
   const out = fs.createWriteStream(outputPath)
   out.write(START_FRAME + "\n")
@@ -139,7 +161,11 @@ async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness
   for (let i = 1; i <= numFrames; i++) {
     const framePath = path.join(tmpFolder, `frame-${i}.png`)
     if (fs.existsSync(framePath)) {
-      const frameLine = await analyseFrame(framePath, coordinatesOfKeys, brightness)
+      const frameLine = await analyseFrame(
+        framePath,
+        coordinatesOfKeys,
+        brightness,
+      )
       out.write(frameLine + "\n")
     }
     if (i % 100 === 0 || i === numFrames) {
@@ -148,7 +174,9 @@ async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness
   }
 
   out.write(END_FRAME + "\n")
-  await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())))
+  await new Promise((resolve, reject) =>
+    out.end((err) => (err ? reject(err) : resolve())),
+  )
 
   removeFolder(tmpFolder)
   console.log(`Done. Output: ${outputPath}`)
