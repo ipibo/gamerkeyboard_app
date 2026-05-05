@@ -279,6 +279,12 @@ int main(int argc, char **argv)
 {
   const char *bus0FilePath = (argc > 1) ? argv[1] : "videoFile_bus0.txt";
   const char *bus1FilePath = (argc > 2) ? argv[2] : "videoFile_bus1.txt";
+  int targetFps = (argc > 3) ? atoi(argv[3]) : 30;
+  if (targetFps < 1)
+  {
+    targetFps = 30;
+  }
+  long frameDurationUs = 1000000L / targetFps;
 
   BusState bus0State;
   BusState bus1State;
@@ -289,6 +295,8 @@ int main(int argc, char **argv)
 
   signal(SIGINT, handleSignal);
   signal(SIGTERM, handleSignal);
+
+  fprintf(stdout, "Target FPS: %d\n", targetFps);
 
   if (openBusFile(&bus0State, bus0FilePath) != 0)
     return 1;
@@ -347,10 +355,22 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &frameEnd);
     long elapsedUs = timeDiffMicroseconds(frameStart, frameEnd);
 
-    if (elapsedUs > 0)
+    long sleepUs = frameDurationUs - elapsedUs;
+    if (sleepUs > 0)
     {
-      int fps = (int)(1000000.0 / (double)elapsedUs);
-      fprintf(stdout, "FPS: %d\n", fps);
+      struct timespec sleepTime;
+      sleepTime.tv_sec = sleepUs / 1000000L;
+      sleepTime.tv_nsec = (sleepUs % 1000000L) * 1000L;
+      nanosleep(&sleepTime, NULL);
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &frameEnd);
+    long loopUs = timeDiffMicroseconds(frameStart, frameEnd);
+
+    if (loopUs > 0)
+    {
+      int actualFps = (int)(1000000.0 / (double)loopUs);
+      fprintf(stdout, "FPS actual=%d target=%d\n", actualFps, targetFps);
     }
   }
 

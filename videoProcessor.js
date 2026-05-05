@@ -8,6 +8,67 @@ const path = require("path")
 const START_FRAME = "0".repeat(32)
 const END_FRAME = "1".repeat(32)
 
+function parseFpsValue(rawFps) {
+  if (!rawFps) return null
+
+  if (typeof rawFps === "number" && Number.isFinite(rawFps) && rawFps > 0) {
+    return rawFps
+  }
+
+  if (typeof rawFps === "string") {
+    if (rawFps.includes("/")) {
+      const [numeratorRaw, denominatorRaw] = rawFps.split("/")
+      const numerator = parseFloat(numeratorRaw)
+      const denominator = parseFloat(denominatorRaw)
+      if (Number.isFinite(numerator) && Number.isFinite(denominator) && denominator > 0) {
+        return numerator / denominator
+      }
+    }
+
+    const asNumber = parseFloat(rawFps)
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return asNumber
+    }
+  }
+
+  return null
+}
+
+async function writeVideoMeta(videoPath, outputDir) {
+  const defaultFps = 30
+  let videoFps = defaultFps
+  let frameCount = 0
+
+  try {
+    const probeInfo = await probe(videoPath)
+    const videoStream = Array.isArray(probeInfo.streams)
+      ? probeInfo.streams.find((streamInfo) => streamInfo.codec_type === "video") || probeInfo.streams[0]
+      : null
+
+    const parsedFps = parseFpsValue(videoStream?.avg_frame_rate) || parseFpsValue(videoStream?.r_frame_rate)
+    if (parsedFps) {
+      videoFps = parsedFps
+    }
+
+    const parsedFrameCount = parseInt(videoStream?.nb_frames, 10)
+    if (Number.isFinite(parsedFrameCount) && parsedFrameCount > 0) {
+      frameCount = parsedFrameCount
+    }
+  } catch (probeError) {
+    console.warn(`Could not probe video metadata for ${videoPath}: ${probeError.message}`)
+  }
+
+  const metaPath = path.join(outputDir, "meta.json")
+  const roundedFps = Math.max(1, Math.round(videoFps))
+  const meta = {
+    fps: roundedFps,
+    frameCount,
+  }
+
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2))
+  return meta
+}
+
 function makefolder(folder) {
   if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true })
 }
@@ -93,4 +154,4 @@ async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness
   console.log(`Done. Output: ${outputPath}`)
 }
 
-module.exports = { processVideo }
+module.exports = { processVideo, writeVideoMeta }

@@ -4,8 +4,9 @@ const bodyParser = require("body-parser")
 const fileUpload = require("express-fileupload")
 const fs = require("fs")
 const path = require("path")
+const { spawn } = require("child_process")
 const probe = require("ffmpeg-probe")
-const { processVideo } = require("./videoProcessor")
+const { processVideo, writeVideoMeta } = require("./videoProcessor")
 
 const app = express()
 const PORT = 3000
@@ -18,7 +19,9 @@ const COORDS_BUS1 = path.join(OUTPUT_DIR, "coords_bus1.txt")
 const OUTPUT_BIN = path.join(OUTPUT_DIR, "videoFile.txt")
 const OUTPUT_BIN_BUS0 = path.join(OUTPUT_DIR, "videoFile_bus0.txt")
 const OUTPUT_BIN_BUS1 = path.join(OUTPUT_DIR, "videoFile_bus1.txt")
+const META_PATH = path.join(OUTPUT_DIR, "meta.json")
 const LAYOUT_CONFIG_PATH = path.join(OUTPUT_DIR, "layoutConfig.json")
+const PLAYER_BINARY_PATH = path.join(__dirname, "pi_video_player_two_busses")
 
 function makefolder(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -47,6 +50,100 @@ makefolder(OUTPUT_DIR)
 makefolder(UPLOAD_DIR)
 
 let previewCache = null
+let playerProcess = null
+let playerState = "stopped"
+let playerFps = 30
+
+function readPlayerFps() {
+  const fallbackFps = 30
+  if (!fs.existsSync(META_PATH)) return fallbackFps
+
+  try {
+    const meta = JSON.parse(fs.readFileSync(META_PATH, "utf8"))
+    const parsedFps = parseInt(meta.fps, 10)
+    if (!Number.isFinite(parsedFps) || parsedFps < 1) {
+      return fallbackFps
+    }
+    return parsedFps
+  } catch (readError) {
+    console.warn(`Could not read ${META_PATH}: ${readError.message}`)
+    return fallbackFps
+  }
+}
+
+function attachPlayerLifecycleHandlers() {
+  if (!playerProcess) return
+
+  playerProcess.on("close", (exitCode, signal) => {
+    console.log(`Player stopped (code=${exitCode}, signal=${signal || "none"})`)
+    playerProcess = null
+    playerState = "stopped"
+  })
+
+  playerProcess.on("error", (spawnError) => {
+    console.error(`Player error: ${spawnError.message}`)
+    playerProcess = null
+    playerState = "stopped"
+  })
+}
+
+function stopPlayerProcess(signalName = "SIGTERM") {
+  return new Promise((resolve) => {
+    if (!playerProcess) {
+      playerState = "stopped"
+      resolve(false)
+      return
+    }
+
+    const processToStop = playerProcess
+    processToStop.once("close", () => resolve(true))
+    try {
+      processToStop.kill(signalName)
+    } catch (killError) {
+      console.warn(`Could not signal player process: ${killError.message}`)
+      resolve(false)
+    }
+  })
+}
+
+async function startPlayerProcess({ forceRestart = false } = {}) {
+  if (!fs.existsSync(PLAYER_BINARY_PATH)) {
+    throw new Error("Player binary missing — compile pi_video_player_two_busses first")
+  }
+
+  if (!fs.existsSync(OUTPUT_BIN_BUS0) || !fs.existsSync(OUTPUT_BIN_BUS1)) {
+    throw new Error("Rendered bus files missing — render a video first")
+  }
+
+  if (playerProcess) {
+    if (!forceRestart) {
+      throw new Error("Player already running")
+    }
+    await stopPlayerProcess("SIGTERM")
+  }
+
+  const renderFps = readPlayerFps()
+  const args = [OUTPUT_BIN_BUS0, OUTPUT_BIN_BUS1, String(renderFps)]
+  playerProcess = spawn(PLAYER_BINARY_PATH, args, {
+    cwd: __dirname,
+    stdio: ["ignore", "ignore", "pipe"],
+  })
+
+  playerState = "running"
+  playerFps = renderFps
+  attachPlayerLifecycleHandlers()
+
+  if (playerProcess.stderr) {
+    playerProcess.stderr.on("data", (chunk) => {
+      const stderrText = chunk.toString().trim()
+      if (stderrText) {
+        console.error(`[player] ${stderrText}`)
+      }
+    })
+  }
+
+  return { state: playerState, fps: playerFps, pid: playerProcess.pid }
+}
 
 function countLines(filePath) {
   return new Promise((resolve, reject) => {
@@ -107,6 +204,10 @@ app.get("/setup", (req, res) => {
 
 app.get("/upload", (req, res) => {
   res.sendFile(path.join(__dirname, "public/upload.html"))
+})
+
+app.get("/dashboard", (req, res) => {
+  res.sendFile(path.join(__dirname, "public/dashboard.html"))
 })
 
 app.get("/api/layouts", (req, res) => {
@@ -225,6 +326,49 @@ app.get("/api/renderProgress", (req, res) => {
   })
 })
 
+app.post("/api/player/start", async (req, res) => {
+  try {
+    const status = await startPlayerProcess()
+    res.json({ ok: true, ...status })
+  } catch (startError) {
+    res.status(400).json({ ok: false, error: startError.message })
+  }
+})
+
+app.post("/api/player/stop", async (req, res) => {
+  const stopped = await stopPlayerProcess("SIGTERM")
+  playerState = "stopped"
+  res.json({ ok: true, state: playerState, stopped })
+})
+
+app.post("/api/player/pause", (req, res) => {
+  if (!playerProcess || playerState !== "running") {
+    return res.status(400).json({ ok: false, error: "Player is not running" })
+  }
+
+  playerProcess.kill("SIGSTOP")
+  playerState = "paused"
+  res.json({ ok: true, state: playerState, fps: playerFps })
+})
+
+app.post("/api/player/resume", (req, res) => {
+  if (!playerProcess || playerState !== "paused") {
+    return res.status(400).json({ ok: false, error: "Player is not paused" })
+  }
+
+  playerProcess.kill("SIGCONT")
+  playerState = "running"
+  res.json({ ok: true, state: playerState, fps: playerFps })
+})
+
+app.get("/api/player/status", (req, res) => {
+  res.json({
+    state: playerState,
+    fps: playerFps,
+    pid: playerProcess ? playerProcess.pid : null,
+  })
+})
+
 app.post("/api/renderVideo", async (req, res) => {
   if (!req.files || !req.files.video) {
     return res.status(400).json({ error: "no video file" })
@@ -259,6 +403,9 @@ app.post("/api/renderVideo", async (req, res) => {
   setImmediate(async () => {
     try {
       emitProgress({ current: 0, total: 0, done: false })
+
+      const renderMeta = await writeVideoMeta(videoPath, OUTPUT_DIR)
+      playerFps = renderMeta.fps
 
       // Resolve LED coordinates: preview-adjusted coords take priority over saved files
       let bus0Coords, bus1Coords
@@ -328,6 +475,12 @@ app.post("/api/renderVideo", async (req, res) => {
       ])
 
       emitProgress({ current: 1, total: 1, done: true, output: OUTPUT_BIN_BUS0 })
+
+      try {
+        await startPlayerProcess({ forceRestart: true })
+      } catch (playerStartError) {
+        console.warn(`Render finished, but player did not auto-start: ${playerStartError.message}`)
+      }
     } catch (err) {
       console.error("render error:", err)
       emitProgress({ error: err.message, done: true })

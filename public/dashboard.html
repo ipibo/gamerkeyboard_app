@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Player Dashboard</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        min-height: 100vh;
+        background: #fff;
+        color: #000;
+        font-family: franklin-gothic-urw, "Franklin Gothic Medium", Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 16px;
+      }
+      a.back {
+        color: #000;
+        text-decoration: underline;
+        font-size: 0.85rem;
+      }
+      a.back:hover {
+        color: #0000ff;
+      }
+      h1 {
+        font-size: 1.4rem;
+        text-align: center;
+      }
+      .panel {
+        border: 1px solid #000;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-width: 560px;
+        width: 100%;
+        margin: 0 auto;
+      }
+      .status-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .status-pill {
+        border: 1px solid #000;
+        padding: 4px 10px;
+        min-width: 80px;
+        text-align: center;
+        font-size: 0.9rem;
+      }
+      .state-running {
+        background: #dff8df;
+      }
+      .state-paused {
+        background: #fff5cc;
+      }
+      .state-stopped {
+        background: #f2f2f2;
+      }
+      .button-row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+        gap: 10px;
+      }
+      button {
+        border: 1px solid #000;
+        background: #0000ff;
+        color: #fff;
+        padding: 10px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #000;
+      }
+      button:disabled {
+        background: #ccc;
+        color: #666;
+        cursor: not-allowed;
+      }
+      #message {
+        min-height: 1.2em;
+        font-size: 0.9rem;
+      }
+      #message.ok {
+        color: #007700;
+      }
+      #message.err {
+        color: #cc0000;
+      }
+      ::selection {
+        color: #fff;
+        background: #000;
+      }
+      @media (max-width: 640px) {
+        .button-row {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="back" href="/">&#8592; Home</a>
+    <h1>Player Dashboard</h1>
+
+    <section class="panel">
+      <div class="status-row">
+        <strong>Status</strong>
+        <span id="status-pill" class="status-pill state-stopped">stopped</span>
+      </div>
+      <div class="status-row">
+        <span>Target FPS</span>
+        <strong id="fps-value">30</strong>
+      </div>
+      <div class="status-row">
+        <span>PID</span>
+        <strong id="pid-value">-</strong>
+      </div>
+
+      <div class="button-row">
+        <button id="start-btn" type="button">Start</button>
+        <button id="stop-btn" type="button">Stop</button>
+        <button id="pause-btn" type="button">Pause</button>
+        <button id="resume-btn" type="button">Resume</button>
+      </div>
+
+      <p id="message"></p>
+    </section>
+
+    <script src="dashboard.js"></script>
+  </body>
+</html>
