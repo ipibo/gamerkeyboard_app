@@ -374,6 +374,7 @@ function emitProgress(data) {
   if (data.done || data.error) {
     renderClients.forEach((c) => c.end())
     renderClients = []
+    renderState = null // clear so the next render doesn't replay a stale terminal state
   }
 }
 
@@ -408,17 +409,22 @@ app.post("/api/player/start", async (req, res) => {
 })
 
 app.post("/api/player/stop", async (req, res) => {
-  const stopped = await stopPlayerProcess("SIGTERM")
+  if (playerProcess) {
+    const stopped = await stopPlayerProcess("SIGUSR1")
+    playerState = "stopped"
+    return res.json({ ok: true, state: playerState, stopped, blackSent: true })
+  }
+
   try {
     await sendBlackoutFrame()
     playerState = "stopped"
-    res.json({ ok: true, state: playerState, stopped, blackSent: true })
+    res.json({ ok: true, state: playerState, stopped: false, blackSent: true })
   } catch (blackoutError) {
     playerState = "stopped"
     res.status(500).json({
       ok: false,
       state: playerState,
-      stopped,
+      stopped: false,
       blackSent: false,
       error: blackoutError.message,
     })

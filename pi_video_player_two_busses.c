@@ -44,7 +44,6 @@ typedef struct
 static const int SPI_BUSES[NUM_SPI_BUS] = {0, 6};
 
 static volatile sig_atomic_t keepRunning = 1;
-
 static void handleSignal(int signo)
 {
   (void)signo;
@@ -337,6 +336,7 @@ int main(int argc, char **argv)
 
   signal(SIGINT, handleSignal);
   signal(SIGTERM, handleSignal);
+  signal(SIGUSR1, handleSignal);
 
   fprintf(stdout, "Target FPS: %d\n", targetFps);
 
