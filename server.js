@@ -4,6 +4,7 @@ const bodyParser = require("body-parser")
 const fileUpload = require("express-fileupload")
 const fs = require("fs")
 const path = require("path")
+const probe = require("ffmpeg-probe")
 const { processVideo } = require("./videoProcessor")
 
 const app = express()
@@ -12,11 +13,34 @@ const LAYOUTS_DIR = path.join(__dirname, "layouts")
 const OUTPUT_DIR = path.join(__dirname, "output")
 const UPLOAD_DIR = path.join(__dirname, "upload")
 const COORDS_PATH = path.join(OUTPUT_DIR, "coords.txt")
+const COORDS_BUS0 = path.join(OUTPUT_DIR, "coords_bus0.txt")
+const COORDS_BUS1 = path.join(OUTPUT_DIR, "coords_bus1.txt")
 const OUTPUT_BIN = path.join(OUTPUT_DIR, "videoFile.txt")
+const OUTPUT_BIN_BUS0 = path.join(OUTPUT_DIR, "videoFile_bus0.txt")
+const OUTPUT_BIN_BUS1 = path.join(OUTPUT_DIR, "videoFile_bus1.txt")
 const LAYOUT_CONFIG_PATH = path.join(OUTPUT_DIR, "layoutConfig.json")
 
 function makefolder(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+}
+
+function readCoordsFile(filePath) {
+  if (!fs.existsSync(filePath)) return []
+  return fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const parts = line.trim().split(" ")
+      return [parseFloat(parts[0]), parseFloat(parts[1])]
+    })
+}
+
+function scaleCoords(coords, canvasWidth, canvasHeight, videoWidth, videoHeight) {
+  if (!canvasWidth || !canvasHeight || !videoWidth || !videoHeight) return coords
+  const scaleX = videoWidth / canvasWidth
+  const scaleY = videoHeight / canvasHeight
+  return coords.map(([x, y]) => [x * scaleX, y * scaleY])
 }
 
 makefolder(OUTPUT_DIR)
@@ -105,11 +129,40 @@ app.post("/api/saveLayout", (req, res) => {
   if (!Array.isArray(coords))
     return res.status(400).json({ error: "coords must be array" })
 
-  const lines = coords.map(([x, y]) => `${x} ${y}`).join("\n")
-  try {
-    fs.writeFileSync(COORDS_PATH, lines)
+  // Split flat coords array into per-bus arrays using layout key counts
+  const coordsBus0 = []
+  const coordsBus1 = []
+  let coordIndex = 0
+  if (Array.isArray(keyboards)) {
+    keyboards.forEach((kbData) => {
+      const layoutFile = path.join(LAYOUTS_DIR, `${kbData.layoutId}.json`)
+      let keyCount = 0
+      try {
+        const layoutData = JSON.parse(fs.readFileSync(layoutFile, "utf8"))
+        keyCount = layoutData.keys.length
+      } catch {
+        // Unknown layout — skip its coords
+      }
+      const busCoords = kbData.spiBus === 1 ? coordsBus1 : coordsBus0
+      for (let ledIndex = 0; ledIndex < keyCount && coordIndex < coords.length; ledIndex++, coordIndex++) {
+        busCoords.push(coords[coordIndex])
+      }
+    })
+  }
+  // Any remaining coords fall to bus 0
+  while (coordIndex < coords.length) {
+    coordsBus0.push(coords[coordIndex++])
+  }
 
-    // Save layout config (keyboards positions and connections)
+  const bus0Lines = coordsBus0.map(([x, y]) => `${x} ${y}`).join("\n")
+  const bus1Lines = coordsBus1.map(([x, y]) => `${x} ${y}`).join("\n")
+  const combinedLines = [...coordsBus0, ...coordsBus1].map(([x, y]) => `${x} ${y}`).join("\n")
+
+  try {
+    fs.writeFileSync(COORDS_BUS0, bus0Lines)
+    fs.writeFileSync(COORDS_BUS1, bus1Lines)
+    fs.writeFileSync(COORDS_PATH, combinedLines)
+
     const config = {
       keyboards: keyboards || [],
       connections: connections || [],
@@ -182,27 +235,10 @@ app.post("/api/renderVideo", async (req, res) => {
     Math.max(1, parseInt(req.body.brightness, 10) || 31),
   )
 
-  if (!fs.existsSync(COORDS_PATH)) {
-    return res
-      .status(400)
-      .json({ error: "no coords saved yet — set up keyboard layout first" })
-  }
-
-  // Accept coords override from upload preview (user repositioned keyboards)
-  console.log("renderVideo: req.body.coords =", req.body.coords ? `string[${req.body.coords.length}]` : req.body.coords)
-  let coordsPath = COORDS_PATH
-  let tempCoordsPath = null
-  if (req.body.coords) {
-    try {
-      const coordsArray = JSON.parse(req.body.coords)
-      if (Array.isArray(coordsArray) && coordsArray.length > 0) {
-        tempCoordsPath = path.join(UPLOAD_DIR, "coords_render_tmp.txt")
-        fs.writeFileSync(tempCoordsPath, coordsArray.map(([x, y]) => `${x} ${y}`).join("\n"))
-        coordsPath = tempCoordsPath
-      }
-    } catch {
-      // fall back to saved coords
-    }
+  // Validate coords source: either override from preview or saved coord files
+  const hasCoordOverride = req.body.coordsBus0 !== undefined
+  if (!hasCoordOverride && !fs.existsSync(COORDS_BUS0) && !fs.existsSync(COORDS_PATH)) {
+    return res.status(400).json({ error: "no coords saved yet — set up keyboard layout first" })
   }
 
   // Save uploaded video to upload/
@@ -210,30 +246,91 @@ app.post("/api/renderVideo", async (req, res) => {
   const videoPath = path.join(UPLOAD_DIR, `video${ext}`)
   await req.files.video.mv(videoPath)
 
+  // Capture body fields now (before setImmediate)
+  const coordsBus0Body = req.body.coordsBus0
+  const coordsBus1Body = req.body.coordsBus1
+
   renderState = null
   previewCache = null
 
   res.json({ ok: true, message: "render started" })
 
-  // Process asynchronously after responding
+  // Process both buses in parallel after responding
   setImmediate(async () => {
     try {
       emitProgress({ current: 0, total: 0, done: false })
-      await processVideo(
-        videoPath,
-        coordsPath,
-        OUTPUT_BIN,
-        brightness,
-        (current, total) => {
-          emitProgress({ current, total, done: false })
-        },
-      )
-      emitProgress({ current: 1, total: 1, done: true, output: OUTPUT_BIN })
+
+      // Resolve LED coordinates: preview-adjusted coords take priority over saved files
+      let bus0Coords, bus1Coords
+      if (coordsBus0Body !== undefined) {
+        bus0Coords = JSON.parse(coordsBus0Body)
+        bus1Coords = coordsBus1Body ? JSON.parse(coordsBus1Body) : []
+        console.log(`Using preview-adjusted coords: bus0=${bus0Coords.length} bus1=${bus1Coords.length} LEDs`)
+      } else {
+        // Read saved coord files and scale from canvas space to video pixel space
+        let canvasWidth = null
+        let canvasHeight = null
+        try {
+          const layoutConfig = JSON.parse(fs.readFileSync(LAYOUT_CONFIG_PATH, "utf8"))
+          canvasWidth = layoutConfig.canvasWidth
+          canvasHeight = layoutConfig.canvasHeight
+        } catch {
+          console.warn("Could not read layoutConfig.json — coord scaling skipped")
+        }
+
+        let videoWidth = null
+        let videoHeight = null
+        try {
+          const videoInfo = await probe(videoPath)
+          const videoStream = videoInfo.streams.find((s) => s.codec_type === "video")
+          if (videoStream) {
+            videoWidth = videoStream.width
+            videoHeight = videoStream.height
+          }
+        } catch {
+          console.warn("Could not probe video dimensions — coord scaling skipped")
+        }
+
+        const rawBus0 = fs.existsSync(COORDS_BUS0)
+          ? readCoordsFile(COORDS_BUS0)
+          : readCoordsFile(COORDS_PATH)
+        const rawBus1 = readCoordsFile(COORDS_BUS1)
+
+        bus0Coords = scaleCoords(rawBus0, canvasWidth, canvasHeight, videoWidth, videoHeight)
+        bus1Coords = scaleCoords(rawBus1, canvasWidth, canvasHeight, videoWidth, videoHeight)
+        console.log(`Using saved coords (scaled ${canvasWidth}x${canvasHeight} → ${videoWidth}x${videoHeight}): bus0=${bus0Coords.length} bus1=${bus1Coords.length} LEDs`)
+      }
+
+      let bus0Current = 0
+      let bus0Total = 0
+      let bus1Current = 0
+      let bus1Total = 0
+
+      function emitMergedProgress() {
+        emitProgress({
+          current: bus0Current + bus1Current,
+          total: bus0Total + bus1Total,
+          done: false,
+        })
+      }
+
+      await Promise.all([
+        processVideo(videoPath, bus0Coords, OUTPUT_BIN_BUS0, brightness, (current, total) => {
+          bus0Current = current
+          bus0Total = total
+          emitMergedProgress()
+        }),
+        processVideo(videoPath, bus1Coords, OUTPUT_BIN_BUS1, brightness, (current, total) => {
+          bus1Current = current
+          bus1Total = total
+          emitMergedProgress()
+        }),
+      ])
+
+      emitProgress({ current: 1, total: 1, done: true, output: OUTPUT_BIN_BUS0 })
     } catch (err) {
       console.error("render error:", err)
       emitProgress({ error: err.message, done: true })
-    } finally {
-      if (tempCoordsPath && fs.existsSync(tempCoordsPath)) fs.unlinkSync(tempCoordsPath)
     }
   })
 })
@@ -289,32 +386,75 @@ app.get("/preview", (req, res) =>
   res.sendFile(path.join(__dirname, "public/preview.html")),
 )
 
+function parseCoordsFile(filePath) {
+  const raw = fs.readFileSync(filePath, "utf8").trim()
+  if (!raw) return []
+  return raw.split("\n").map((line) => {
+    const [x, y] = line.trim().split(/\s+/).map(Number)
+    return [x, y]
+  })
+}
+
 app.get("/api/preview/info", async (req, res) => {
   try {
-    if (!fs.existsSync(COORDS_PATH))
+    const hasBusLayout = fs.existsSync(COORDS_BUS0)
+    const hasBusRender = fs.existsSync(OUTPUT_BIN_BUS0)
+
+    if (!hasBusLayout && !fs.existsSync(COORDS_PATH))
       return res.json({ ready: false, reason: "No coords saved — set up keyboard layout first" })
-    if (!fs.existsSync(OUTPUT_BIN))
+    if (!hasBusRender && !fs.existsSync(OUTPUT_BIN))
       return res.json({ ready: false, reason: "No video rendered yet" })
 
+    if (hasBusRender) {
+      // Dual-bus mode: read per-bus coord and video files
+      const bus0CoordsStat = fs.statSync(COORDS_BUS0)
+      const bus0VideoStat = fs.statSync(OUTPUT_BIN_BUS0)
+      if (
+        previewCache &&
+        previewCache.dualBusMode &&
+        previewCache.coordsMtime === bus0CoordsStat.mtimeMs &&
+        previewCache.videoMtime === bus0VideoStat.mtimeMs
+      ) {
+        return res.json({ ready: true, ...previewCache })
+      }
+
+      const bus0Coords = parseCoordsFile(COORDS_BUS0)
+      const bus1Coords = fs.existsSync(COORDS_BUS1) ? parseCoordsFile(COORDS_BUS1) : []
+      const coords = [...bus0Coords, ...bus1Coords]
+      const totalLines = await countLines(OUTPUT_BIN_BUS0)
+      const frameCount = Math.max(0, totalLines - 2)
+
+      previewCache = {
+        dualBusMode: true,
+        coords,
+        frameCount,
+        ledCount: coords.length,
+        bus0LedCount: bus0Coords.length,
+        bus1LedCount: bus1Coords.length,
+        coordsMtime: bus0CoordsStat.mtimeMs,
+        videoMtime: bus0VideoStat.mtimeMs,
+      }
+      return res.json({ ready: true, ...previewCache })
+    }
+
+    // Single-bus fallback (legacy videoFile.txt)
     const cStat = fs.statSync(COORDS_PATH)
     const vStat = fs.statSync(OUTPUT_BIN)
     if (
       previewCache &&
+      !previewCache.dualBusMode &&
       previewCache.coordsMtime === cStat.mtimeMs &&
       previewCache.videoMtime === vStat.mtimeMs
     ) {
       return res.json({ ready: true, ...previewCache })
     }
 
-    const rawCoords = fs.readFileSync(COORDS_PATH, "utf8").trim().split("\n")
-    const coords = rawCoords.map((line) => {
-      const [x, y] = line.trim().split(/\s+/).map(Number)
-      return [x, y]
-    })
+    const coords = parseCoordsFile(COORDS_PATH)
     const totalLines = await countLines(OUTPUT_BIN)
     const frameCount = Math.max(0, totalLines - 2)
 
     previewCache = {
+      dualBusMode: false,
       coords,
       frameCount,
       ledCount: coords.length,
@@ -333,16 +473,32 @@ app.get("/api/preview/frames", async (req, res) => {
     const count = Math.min(100, Math.max(1, parseInt(req.query.count) || 50))
 
     if (!previewCache) {
-      if (!fs.existsSync(OUTPUT_BIN))
+      if (!fs.existsSync(OUTPUT_BIN_BUS0) && !fs.existsSync(OUTPUT_BIN))
         return res.status(404).json({ error: "video not rendered" })
       return res.status(400).json({ error: "call /api/preview/info first" })
     }
 
-    const { ledCount, frameCount } = previewCache
+    const { ledCount, frameCount, dualBusMode, bus0LedCount, bus1LedCount } = previewCache
     if (!ledCount) return res.json({ start, frames: [] })
 
     const clampedCount = Math.min(count, frameCount - start)
     if (clampedCount <= 0) return res.json({ start, frames: [] })
+
+    if (dualBusMode) {
+      const [bus0Lines, bus1Lines] = await Promise.all([
+        readFrameLines(OUTPUT_BIN_BUS0, start + 1, clampedCount),
+        bus1LedCount > 0
+          ? readFrameLines(OUTPUT_BIN_BUS1, start + 1, clampedCount)
+          : Promise.resolve([]),
+      ])
+      const frames = bus0Lines.map((bus0Line, frameIndex) => {
+        const bus0Rgb = decodeFrame(bus0Line, bus0LedCount)
+        const bus1Rgb =
+          bus1Lines[frameIndex] ? decodeFrame(bus1Lines[frameIndex], bus1LedCount) : []
+        return [...bus0Rgb, ...bus1Rgb]
+      })
+      return res.json({ start, frames })
+    }
 
     const rawLines = await readFrameLines(OUTPUT_BIN, start + 1, clampedCount)
     const frames = rawLines.map((line) => decodeFrame(line, ledCount))

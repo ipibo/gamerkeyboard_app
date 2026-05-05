@@ -218,13 +218,17 @@ videoInput.addEventListener("change", async (e) => {
     framePreview.height = tempCanvas.height
 
     if (config.keyboards && config.keyboards.length > 0) {
+      // Scale keyboard positions from setup-canvas space to video-pixel space
+      const scaleX = tempCanvas.width / (config.canvasWidth || tempCanvas.width)
+      const scaleY = tempCanvas.height / (config.canvasHeight || tempCanvas.height)
+
       previewState.keyboardOffsets = config.keyboards.map((kb) => ({
-        offsetX: kb.offsetX,
-        offsetY: kb.offsetY,
+        offsetX: kb.offsetX * scaleX,
+        offsetY: kb.offsetY * scaleY,
       }))
       previewState.layoutKeys = config.keyboards.map((kb) => {
         const layout = allLayouts.find((l) => l.id === kb.layoutId)
-        return layout ? layout.keys : []
+        return layout ? layout.keys.map(([kx, ky]) => [kx * scaleX, ky * scaleY]) : []
       })
       previewState.config = config
     }
@@ -247,19 +251,19 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault()
   const formData = new FormData(form)
 
-  // If keyboards were positioned in the preview, compute coords from current offsets
-  if (previewState.keyboardOffsets.length > 0 && previewState.layoutKeys.length > 0) {
-    const coords = []
+  // Send per-bus video-pixel coords derived from the (possibly adjusted) preview state
+  if (previewState.config && previewState.keyboardOffsets.length > 0 && previewState.layoutKeys.length > 0) {
+    const coordsBus0 = []
+    const coordsBus1 = []
     previewState.keyboardOffsets.forEach(({ offsetX, offsetY }, i) => {
       const keys = previewState.layoutKeys[i] || []
-      keys.forEach(([kx, ky]) => coords.push([kx + offsetX, ky + offsetY]))
+      const spiBus = previewState.config.keyboards[i]?.spiBus || 0
+      const targetBus = spiBus === 1 ? coordsBus1 : coordsBus0
+      keys.forEach(([kx, ky]) => targetBus.push([kx + offsetX, ky + offsetY]))
     })
-    if (coords.length > 0) {
-      formData.append("coords", JSON.stringify(coords))
-      console.log("coords override: sending", coords.length, "points, first:", coords[0])
-    }
-  } else {
-    console.log("coords override: skipped — keyboardOffsets:", previewState.keyboardOffsets.length, "layoutKeys:", previewState.layoutKeys.length)
+    formData.append("coordsBus0", JSON.stringify(coordsBus0))
+    formData.append("coordsBus1", JSON.stringify(coordsBus1))
+    console.log("coords override: bus0=", coordsBus0.length, "bus1=", coordsBus1.length, "LEDs")
   }
 
   progressWrap.style.display = "flex"
@@ -293,7 +297,7 @@ form.addEventListener("submit", async (e) => {
     if (data.done) {
       progressBar.value = 100
       progressLabel.textContent = "Done"
-      resultEl.textContent = "videoFile.txt written successfully"
+      resultEl.textContent = "videoFile_bus0.txt + videoFile_bus1.txt written successfully"
       resultEl.className = "ok"
       sse.close()
       form.querySelector("button").disabled = false

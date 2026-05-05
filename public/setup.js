@@ -9,8 +9,10 @@ const saveBtn = document.getElementById("save-btn")
 const statusEl = document.getElementById("status")
 const kbWidthInput = document.getElementById("kb-width")
 const kbHeightInput = document.getElementById("kb-height")
+const busToggleWrap = document.getElementById("bus-toggle-wrap")
+const busSelect = document.getElementById("bus-select")
 
-// Each entry: { keys: [[x,y],...], offsetX, offsetY, name, order, width, height }
+// Each entry: { keys: [[x,y],...], offsetX, offsetY, name, order, spiBus }
 let keyboards = []
 let availableLayouts = []
 
@@ -28,7 +30,10 @@ let connecting = null // index of keyboard being connected FROM
 let connectTo = null // index being connected TO (preview)
 
 const KEY_RADIUS = 5
-const COLORS = ["#9c41f2", "#f241a0", "#41a0f2", "#f2c841", "#41f280"]
+const BUS_COLORS = {
+  0: ["#f2c841", "#f28b41", "#f26841", "#f2414e", "#f2a841"],
+  1: ["#41a0f2", "#4169f2", "#9c41f2", "#41d4f2", "#41f2c8"],
+}
 
 function setStatus(msg, isError) {
   statusEl.textContent = msg
@@ -40,6 +45,15 @@ function updateSizeInputs() {
     const kb = keyboards[selected]
     kbWidthInput.value = kb.width || 100
     kbHeightInput.value = kb.height || 100
+  }
+}
+
+function updateBusToggle() {
+  if (selected !== null && selected < keyboards.length) {
+    busToggleWrap.style.display = "flex"
+    busSelect.value = String(keyboards[selected].spiBus || 0)
+  } else {
+    busToggleWrap.style.display = "none"
   }
 }
 
@@ -99,6 +113,7 @@ fetch("/api/layouts")
             offsetY: kbData.offsetY,
             name: kbData.name,
             order: kbData.order,
+            spiBus: kbData.spiBus || 0,
           })
         }
       })
@@ -132,8 +147,10 @@ addBtn.addEventListener("click", () => {
     offsetY: 20,
     name: layout.name,
     order: keyboards.length,
+    spiBus: 0,
   })
   selected = keyboards.length - 1
+  updateBusToggle()
   draw()
   setStatus(`added ${layout.name}`)
 })
@@ -160,6 +177,7 @@ removeBtn.addEventListener("click", () => {
   })
 
   selected = null
+  updateBusToggle()
   draw()
   setStatus("removed")
 })
@@ -187,6 +205,7 @@ saveBtn.addEventListener("click", () => {
           layoutId: layout ? layout.id : "unknown",
           offsetX: kb.offsetX,
           offsetY: kb.offsetY,
+          spiBus: kb.spiBus || 0,
         }
       }),
       connections,
@@ -211,6 +230,13 @@ kbWidthInput.addEventListener("change", () => {
 kbHeightInput.addEventListener("change", () => {
   updateCanvasSize()
   setStatus(`canvas height set to ${canvas.height}`)
+})
+
+busSelect.addEventListener("change", () => {
+  if (selected !== null && selected < keyboards.length) {
+    keyboards[selected].spiBus = parseInt(busSelect.value, 10)
+    draw()
+  }
 })
 
 function draw() {
@@ -267,9 +293,10 @@ function draw() {
     ctx.setLineDash([])
   }
 
-  keyboards.forEach((kb, i) => {
-    const color = COLORS[i % COLORS.length]
-    const isSelected = i === selected
+  keyboards.forEach((kb, kbIndex) => {
+    const busColors = BUS_COLORS[kb.spiBus] || BUS_COLORS[0]
+    const color = busColors[kbIndex % busColors.length]
+    const isSelected = kbIndex === selected
 
     // bounding box
     if (isSelected) {
@@ -297,7 +324,7 @@ function draw() {
     ctx.fillStyle = color
     ctx.font = "11px Courier New"
     ctx.fillText(
-      `${kb.name} [${i}] ⌘${kb.order}`,
+      `${kb.name} [${kbIndex}] B${kb.spiBus || 0}`,
       kb.offsetX + 2,
       kb.offsetY - 2,
     )
@@ -359,11 +386,13 @@ canvas.addEventListener("mousedown", (e) => {
     dragOffsetX = keyboards[hit].offsetX
     dragOffsetY = keyboards[hit].offsetY
     canvas.style.cursor = "grabbing"
+    updateBusToggle()
     draw()
   } else {
     selected = null
     connecting = null
     connectTo = null
+    updateBusToggle()
     draw()
   }
 })
@@ -425,8 +454,10 @@ document.addEventListener("keydown", (e) => {
         offsetY: kb.offsetY + 50,
         name: kb.name + " (copy)",
         order: keyboards.length,
+        spiBus: kb.spiBus || 0,
       })
       selected = keyboards.length - 1
+      updateBusToggle()
       draw()
       setStatus("keyboard copied")
     }

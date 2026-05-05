@@ -20,17 +20,6 @@ function removeFile(filePath) {
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
 }
 
-function readCoordinates(filePath) {
-  return fs
-    .readFileSync(filePath, "utf8")
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => {
-      const parts = line.trim().split(" ")
-      return [parseFloat(parts[0]), parseFloat(parts[1])]
-    })
-}
-
 function countExtractedFrames(folder) {
   let count = 0
   while (fs.existsSync(path.join(folder, `frame-${count + 1}.png`))) count++
@@ -49,12 +38,23 @@ async function analyseFrame(imagePath, coordinatesOfKeys, brightness) {
     .join("")
 }
 
-async function processVideo(videoPath, coordsPath, outputPath, brightness, onProgress) {
-  const tmpFolder = path.join(path.dirname(outputPath), "../tmp")
+async function processVideo(videoPath, coordinatesOfKeys, outputPath, brightness, onProgress) {
+  const tmpFolder = path.join(
+    path.dirname(outputPath),
+    `../tmp_${path.basename(outputPath, path.extname(outputPath))}`,
+  )
   makefolder(tmpFolder)
   removeFile(outputPath)
 
-  const coordinatesOfKeys = readCoordinates(coordsPath)
+  if (coordinatesOfKeys.length === 0) {
+    const out = fs.createWriteStream(outputPath)
+    out.write(START_FRAME + "\n")
+    out.write(END_FRAME + "\n")
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())))
+    onProgress(0, 0)
+    console.log(`Zero LEDs — wrote empty output: ${outputPath}`)
+    return
+  }
 
   await extractFrame({
     input: videoPath,
