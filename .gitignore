@@ -5,3 +5,4 @@ upload/
 .claude/settings.local.json
 plans/
 contexts/
+CLAUDE.md
