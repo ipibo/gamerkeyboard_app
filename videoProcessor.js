@@ -4,6 +4,7 @@ const fs = require("fs")
 const Jimp = require("jimp")
 const probe = require("ffmpeg-probe")
 const path = require("path")
+const { spawn } = require("child_process")
 
 const START_FRAME = "0".repeat(32)
 const END_FRAME = "1".repeat(32)
@@ -182,4 +183,169 @@ async function processVideo(
   console.log(`Done. Output: ${outputPath}`)
 }
 
-module.exports = { processVideo, writeVideoMeta }
+/**
+ * Build one LED bitstring line for a single bus by sampling pixels from a raw
+ * RGBA frame buffer. No PNG decode — reads bytes directly.
+ */
+function buildBusLine(frameBuffer, frameWidth, frameHeight, coordinatesOfKeys, byte0) {
+  let line = ""
+  for (let ledIndex = 0; ledIndex < coordinatesOfKeys.length; ledIndex++) {
+    const coordinate = coordinatesOfKeys[ledIndex]
+    let pixelX = Math.round(coordinate[0])
+    let pixelY = Math.round(coordinate[1])
+    if (pixelX < 0) pixelX = 0
+    else if (pixelX >= frameWidth) pixelX = frameWidth - 1
+    if (pixelY < 0) pixelY = 0
+    else if (pixelY >= frameHeight) pixelY = frameHeight - 1
+
+    const pixelOffset = (pixelY * frameWidth + pixelX) * 4
+    const red = frameBuffer[pixelOffset]
+    const green = frameBuffer[pixelOffset + 1]
+    const blue = frameBuffer[pixelOffset + 2]
+    const word = (byte0 << 24) | (blue << 16) | (green << 8) | red
+    line += (word >>> 0).toString(2).padStart(32, "0")
+  }
+  return line
+}
+
+/**
+ * Render all SPI buses in a single pass. ffmpeg streams raw RGBA frames over
+ * stdout; each frame is decoded once and sampled for every bus. Avoids PNG
+ * encode/decode and re-extracting the video per bus.
+ *
+ * @param {string} videoPath
+ * @param {Array<Array<[number,number]>>} busCoords  coords per bus (video pixel space)
+ * @param {string[]} outputPaths  output file per bus, same length as busCoords
+ * @param {number} brightness  1..31
+ * @param {(current:number, total:number) => void} onProgress
+ */
+async function processVideoAllBuses(
+  videoPath,
+  busCoords,
+  outputPaths,
+  brightness,
+  onProgress,
+) {
+  // Frame geometry from probe.
+  let frameWidth = 0
+  let frameHeight = 0
+  let estimatedFrameCount = 0
+  try {
+    const info = await probe(videoPath)
+    const videoStream = info.streams.find((s) => s.codec_type === "video")
+    frameWidth = videoStream.width
+    frameHeight = videoStream.height
+    const probedCount = parseInt(videoStream.nb_frames, 10)
+    if (Number.isFinite(probedCount) && probedCount > 0) {
+      estimatedFrameCount = probedCount
+    } else {
+      const fps =
+        parseFpsValue(videoStream.avg_frame_rate) ||
+        parseFpsValue(videoStream.r_frame_rate)
+      const duration = parseFloat(info.format?.duration || videoStream.duration)
+      if (fps && Number.isFinite(duration)) {
+        estimatedFrameCount = Math.round(fps * duration)
+      }
+    }
+  } catch (probeError) {
+    throw new Error(`Could not probe video geometry: ${probeError.message}`)
+  }
+
+  if (!frameWidth || !frameHeight) {
+    throw new Error("Video width/height unavailable — cannot sample pixels")
+  }
+
+  const frameByteLength = frameWidth * frameHeight * 4
+  const byte0 = 0xe0 | (brightness & 0x1f)
+
+  // Open one write stream per bus, start frame up front.
+  const busStreams = outputPaths.map((outputPath) => {
+    removeFile(outputPath)
+    const stream = fs.createWriteStream(outputPath)
+    stream.write(START_FRAME + "\n")
+    return stream
+  })
+
+  console.log(
+    `Streaming ${frameWidth}x${frameHeight} frames; buses: ${busCoords
+      .map((coords, busIndex) => `bus${busIndex}=${coords.length}`)
+      .join(" ")}`,
+  )
+
+  const ffmpeg = spawn("ffmpeg", [
+    "-i",
+    videoPath,
+    "-f",
+    "rawvideo",
+    "-pix_fmt",
+    "rgba",
+    "-v",
+    "error",
+    "-",
+  ])
+
+  let pending = Buffer.alloc(0)
+  let frameIndex = 0
+  let ffmpegStderr = ""
+
+  ffmpeg.stderr.on("data", (chunk) => {
+    ffmpegStderr += chunk.toString()
+  })
+
+  await new Promise((resolve, reject) => {
+    ffmpeg.stdout.on("data", (chunk) => {
+      pending = pending.length ? Buffer.concat([pending, chunk]) : chunk
+
+      while (pending.length >= frameByteLength) {
+        const frameBuffer = pending.subarray(0, frameByteLength)
+        pending = pending.subarray(frameByteLength)
+
+        for (let busIndex = 0; busIndex < busCoords.length; busIndex++) {
+          const coords = busCoords[busIndex]
+          // Empty buses emit only start+end frames (handled at close).
+          if (coords.length === 0) continue
+          const line = buildBusLine(
+            frameBuffer,
+            frameWidth,
+            frameHeight,
+            coords,
+            byte0,
+          )
+          busStreams[busIndex].write(line + "\n")
+        }
+
+        frameIndex++
+        if (frameIndex % 100 === 0) {
+          onProgress(frameIndex, estimatedFrameCount || frameIndex)
+        }
+      }
+    })
+
+    ffmpeg.on("error", reject)
+    ffmpeg.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(`ffmpeg exited with code ${code}: ${ffmpegStderr.trim()}`),
+        )
+      } else {
+        resolve()
+      }
+    })
+  })
+
+  // End frame + flush all buses.
+  await Promise.all(
+    busStreams.map(
+      (stream) =>
+        new Promise((resolve, reject) => {
+          stream.write(END_FRAME + "\n")
+          stream.end((err) => (err ? reject(err) : resolve()))
+        }),
+    ),
+  )
+
+  onProgress(frameIndex, frameIndex)
+  console.log(`Done. Rendered ${frameIndex} frames across ${outputPaths.length} buses.`)
+}
+
+module.exports = { processVideo, processVideoAllBuses, writeVideoMeta }

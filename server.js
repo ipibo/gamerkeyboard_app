@@ -6,7 +6,7 @@ const fs = require("fs")
 const path = require("path")
 const { spawn } = require("child_process")
 const probe = require("ffmpeg-probe")
-const { processVideo, writeVideoMeta } = require("./videoProcessor")
+const { processVideoAllBuses, writeVideoMeta } = require("./videoProcessor")
 
 const app = express()
 const PORT = 3000
@@ -720,31 +720,14 @@ app.post("/api/renderVideo", async (req, res) => {
         )
       }
 
-      const busCurrent = busCoords.map(() => 0)
-      const busTotal = busCoords.map(() => 0)
-
-      function emitMergedProgress() {
-        emitProgress({
-          current: busCurrent.reduce((sum, value) => sum + value, 0),
-          total: busTotal.reduce((sum, value) => sum + value, 0),
-          done: false,
-        })
-      }
-
-      await Promise.all(
-        busCoords.map((coords, busIndex) =>
-          processVideo(
-            videoPath,
-            coords,
-            OUTPUT_BIN_BUS[busIndex],
-            brightness,
-            (current, total) => {
-              busCurrent[busIndex] = current
-              busTotal[busIndex] = total
-              emitMergedProgress()
-            },
-          ),
-        ),
+      await processVideoAllBuses(
+        videoPath,
+        busCoords,
+        OUTPUT_BIN_BUS,
+        brightness,
+        (current, total) => {
+          emitProgress({ current, total, done: false })
+        },
       )
 
       emitProgress({
