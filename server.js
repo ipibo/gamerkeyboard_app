@@ -63,6 +63,7 @@ let previewCache = null
 let playerProcess = null
 let playerState = "stopped"
 let playerFps = 30
+let playerBrightness = 1
 
 function readPlayerFps() {
   const fallbackFps = 30
@@ -239,6 +240,7 @@ async function startPlayerProcess({
   forceRestart = false,
   busPaths = OUTPUT_BIN_BUS,
   fps = null,
+  brightness = playerBrightness,
 } = {}) {
   if (!fs.existsSync(PLAYER_BINARY_PATH)) {
     throw new Error(
@@ -258,7 +260,14 @@ async function startPlayerProcess({
   }
 
   const renderFps = fps !== null ? fps : readPlayerFps()
-  const args = [...busPaths, String(renderFps)]
+  const clampedBrightness = Math.min(31, Math.max(1, parseInt(brightness, 10) || 1))
+  playerBrightness = clampedBrightness
+  const args = [
+    ...busPaths,
+    String(renderFps),
+    "--brightness",
+    String(clampedBrightness),
+  ]
   playerProcess = spawn(PLAYER_BINARY_PATH, args, {
     cwd: __dirname,
     stdio: ["ignore", "ignore", "pipe"],
@@ -277,7 +286,12 @@ async function startPlayerProcess({
     })
   }
 
-  return { state: playerState, fps: playerFps, pid: playerProcess.pid }
+  return {
+    state: playerState,
+    fps: playerFps,
+    brightness: playerBrightness,
+    pid: playerProcess.pid,
+  }
 }
 
 function countLines(filePath) {
@@ -474,7 +488,7 @@ app.get("/api/renderProgress", (req, res) => {
 
 app.post("/api/player/start", async (req, res) => {
   try {
-    const status = await startPlayerProcess()
+    const status = await startPlayerProcess({ brightness: req.body.brightness })
     res.json({ ok: true, ...status })
   } catch (startError) {
     res.status(400).json({ ok: false, error: startError.message })
@@ -592,6 +606,7 @@ app.get("/api/player/status", (req, res) => {
   res.json({
     state: playerState,
     fps: playerFps,
+    brightness: playerBrightness,
     pid: playerProcess ? playerProcess.pid : null,
   })
 })
@@ -601,10 +616,10 @@ app.post("/api/renderVideo", async (req, res) => {
     return res.status(400).json({ error: "no video file" })
   }
 
-  const brightness = Math.min(
-    31,
-    Math.max(1, parseInt(req.body.brightness, 10) || 31),
-  )
+  // Always render at minimum brightness (safe floor). Live brightness is now
+  // applied at playback by the player (--brightness) and set in the dashboard,
+  // so no re-render is needed to change it.
+  const brightness = 1
 
   // Validate coords source: either override from preview or saved coord files
   const hasCoordOverride = req.body.coordsBus0 !== undefined

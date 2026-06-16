@@ -9,6 +9,16 @@ const pauseButton = document.getElementById("pause-btn")
 const resumeButton = document.getElementById("resume-btn")
 const fadeButton = document.getElementById("fade-btn")
 
+const brightnessInput = document.getElementById("brightness")
+const brightnessVal = document.getElementById("brightness-val")
+const brightnessWarning = document.getElementById("brightness-warning")
+
+brightnessInput.addEventListener("input", () => {
+  brightnessVal.textContent = brightnessInput.value
+  brightnessWarning.style.display =
+    parseInt(brightnessInput.value, 10) > 1 ? "block" : "none"
+})
+
 function setMessage(text, type) {
   messageEl.textContent = text || ""
   messageEl.className = type || ""
@@ -32,10 +42,11 @@ function updateStatusUi(status) {
   fadeButton.disabled = isRunning || isPaused
 }
 
-async function requestJson(url, method) {
+async function requestJson(url, method, body) {
   const response = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
   })
   const payload = await response.json()
   if (!response.ok || payload.error) {
@@ -53,9 +64,9 @@ async function refreshStatus() {
   }
 }
 
-async function runAction(url, actionName) {
+async function runAction(url, actionName, body) {
   try {
-    const payload = await requestJson(url, "POST")
+    const payload = await requestJson(url, "POST", body)
     updateStatusUi(payload)
     setMessage(`${actionName} successful`, "ok")
   } catch (error) {
@@ -64,7 +75,9 @@ async function runAction(url, actionName) {
 }
 
 startButton.addEventListener("click", () =>
-  runAction("/api/player/start", "Start"),
+  runAction("/api/player/start", "Start", {
+    brightness: parseInt(brightnessInput.value, 10),
+  }),
 )
 stopButton.addEventListener("click", () =>
   runAction("/api/player/stop", "Stop"),

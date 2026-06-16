@@ -54,6 +54,11 @@ typedef struct
 static int spiFd[NUM_SPI_BUS];
 
 static volatile sig_atomic_t keepRunning = 1;
+
+/* Global 5-bit brightness applied at playback. Overrides the low 5 bits of
+   each LED's top byte so brightness is set live without re-rendering. Default
+   1 (minimum) is the safe floor for hardware testing. */
+static int playbackBrightness = 1;
 static void handleSignal(int signo)
 {
   (void)signo;
@@ -194,6 +199,9 @@ static int decodeFrameLineToBuffer(const char *frameLine, BusState *busState)
     {
       return -1;
     }
+
+    /* Keep sign bits (top 3), override brightness (low 5) with live value */
+    b0 = (b0 & 0xE0) | (playbackBrightness & 0x1F);
 
     busState->spiBuffer[byteOffset + 0] = (uint8_t)b0;
     busState->spiBuffer[byteOffset + 1] = (uint8_t)b1;
@@ -364,11 +372,28 @@ int main(int argc, char **argv)
 
   int fpsArgIndex = NUM_SPI_BUS + 1;
   int targetFps = (argc > fpsArgIndex) ? atoi(argv[fpsArgIndex]) : 30;
-  int blackOnce = (argc > fpsArgIndex + 1 && strcmp(argv[fpsArgIndex + 1], "--black-once") == 0) ? 1 : 0;
   if (targetFps < 1)
   {
     targetFps = 30;
   }
+
+  /* Optional flags after fps: --black-once and --brightness N (any order) */
+  int blackOnce = 0;
+  for (int argIndex = fpsArgIndex + 1; argIndex < argc; argIndex++)
+  {
+    if (strcmp(argv[argIndex], "--black-once") == 0)
+    {
+      blackOnce = 1;
+    }
+    else if (strcmp(argv[argIndex], "--brightness") == 0 && argIndex + 1 < argc)
+    {
+      playbackBrightness = atoi(argv[++argIndex]);
+    }
+  }
+  if (playbackBrightness < 1)
+    playbackBrightness = 1;
+  if (playbackBrightness > 31)
+    playbackBrightness = 31;
   long frameDurationUs = 1000000L / targetFps;
 
   BusState busStates[NUM_SPI_BUS];
@@ -380,6 +405,7 @@ int main(int argc, char **argv)
   signal(SIGUSR1, handleSignal);
 
   fprintf(stdout, "Target FPS: %d\n", targetFps);
+  fprintf(stdout, "Playback brightness: %d/31\n", playbackBrightness);
 
   for (int busIndex = 0; busIndex < NUM_SPI_BUS; busIndex++)
   {

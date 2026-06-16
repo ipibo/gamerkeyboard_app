@@ -66,13 +66,12 @@
         width: 100%;
         accent-color: #0000ff;
       }
-      .brightness-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
+      .render-note {
+        font-size: 0.85rem;
+        color: #555;
       }
-      .brightness-row input {
-        flex: 1;
+      .render-note a {
+        color: #0000ff;
       }
       #brightness-val {
         min-width: 2ch;
@@ -185,31 +184,10 @@
             Video file
             <input type="file" name="video" accept="video/*" required />
           </label>
-          <label>
-            Brightness (1–31)
-            <div class="brightness-row">
-              <input
-                type="range"
-                name="brightness"
-                id="brightness"
-                min="1"
-                max="31"
-                value="1"
-              />
-              <span id="brightness-val">1</span>
-            </div>
-            <div
-              id="brightness-warning"
-              style="
-                display: none;
-                color: #e67e22;
-                font-size: 0.85em;
-                margin-top: 4px;
-              "
-            >
-              ⚠ Brightness &gt; 1 — set to 1 for hardware testing
-            </div>
-          </label>
+          <p class="render-note">
+            Rendered at minimum brightness. Set live brightness in the
+            <a href="/dashboard">Player Dashboard</a>.
+          </p>
           <button type="submit">Render</button>
           <span id="render-hint">Preview required before rendering</span>
         </form>

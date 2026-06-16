@@ -88,6 +88,25 @@
         color: #666;
         cursor: not-allowed;
       }
+      .brightness-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 180px;
+      }
+      .brightness-row input {
+        flex: 1;
+        accent-color: #0000ff;
+      }
+      #brightness-val {
+        min-width: 2ch;
+        text-align: right;
+      }
+      .warning {
+        display: none;
+        color: #cc6600;
+        font-size: 0.85rem;
+      }
       #message {
         min-height: 1.2em;
         font-size: 0.9rem;
@@ -125,6 +144,25 @@
       <div class="status-row">
         <span>PID</span>
         <strong id="pid-value">-</strong>
+      </div>
+
+      <div class="status-row">
+        <label for="brightness">Brightness (1&ndash;31)</label>
+        <div class="brightness-row">
+          <input
+            type="range"
+            name="brightness"
+            id="brightness"
+            min="1"
+            max="31"
+            value="1"
+            step="1"
+          />
+          <span id="brightness-val">1</span>
+        </div>
+      </div>
+      <div id="brightness-warning" class="warning">
+        &#9888; Brightness &gt; 1 &mdash; set to 1 for hardware testing
       </div>
 
       <div class="button-row">

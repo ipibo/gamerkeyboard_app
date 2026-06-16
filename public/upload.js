@@ -1,6 +1,4 @@
 const form = document.getElementById("upload-form")
-const brightnessInput = document.getElementById("brightness")
-const brightnessVal = document.getElementById("brightness-val")
 const progressWrap = document.getElementById("progress-wrap")
 const progressBar = document.getElementById("progress-bar")
 const progressLabel = document.getElementById("progress-label")
@@ -178,14 +176,6 @@ document.addEventListener("mousemove", (e) => {
 document.addEventListener("mouseup", () => {
   previewState.isDragging = false
   framePreview.style.cursor = "default"
-})
-
-const brightnessWarning = document.getElementById("brightness-warning")
-
-brightnessInput.addEventListener("input", () => {
-  brightnessVal.textContent = brightnessInput.value
-  brightnessWarning.style.display =
-    parseInt(brightnessInput.value) > 1 ? "block" : "none"
 })
 
 // Handle video file selection for frame extraction
