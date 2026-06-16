@@ -6,6 +6,7 @@ const fs = require("fs")
 const path = require("path")
 const { spawn } = require("child_process")
 const probe = require("ffmpeg-probe")
+const AdmZip = require("adm-zip")
 const { processVideoAllBuses, writeVideoMeta } = require("./videoProcessor")
 
 const app = express()
@@ -13,6 +14,7 @@ const PORT = 3000
 const LAYOUTS_DIR = path.join(__dirname, "layouts")
 const OUTPUT_DIR = path.join(__dirname, "output")
 const UPLOAD_DIR = path.join(__dirname, "upload")
+const LIBRARY_DIR = path.join(__dirname, "library")
 const COORDS_PATH = path.join(OUTPUT_DIR, "coords.txt")
 const NUM_BUSES = 4
 const COORDS_BUS = Array.from({ length: NUM_BUSES }, (_, busIndex) =>
@@ -58,12 +60,79 @@ function scaleCoords(
 
 makefolder(OUTPUT_DIR)
 makefolder(UPLOAD_DIR)
+makefolder(LIBRARY_DIR)
+
+// Per-bus filenames used inside every library entry folder.
+const ENTRY_BUS_FILES = Array.from(
+  { length: NUM_BUSES },
+  (_, busIndex) => `videoFile_bus${busIndex}.txt`,
+)
+const ENTRY_COORD_FILES = Array.from(
+  { length: NUM_BUSES },
+  (_, busIndex) => `coords_bus${busIndex}.txt`,
+)
+
+function sanitizeNameSlug(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+}
+
+function makeEntryId(name) {
+  const slug = sanitizeNameSlug(name)
+  return slug ? `${Date.now()}-${slug}` : `${Date.now()}`
+}
+
+// Reject ids that could escape LIBRARY_DIR via path traversal.
+function entryDirForId(entryId) {
+  if (typeof entryId !== "string" || !/^[A-Za-z0-9._-]+$/.test(entryId)) {
+    return null
+  }
+  return path.join(LIBRARY_DIR, entryId)
+}
+
+function resolveEntryBusPaths(entryId) {
+  const entryDir = entryDirForId(entryId)
+  if (!entryDir) return null
+  return ENTRY_BUS_FILES.map((fileName) => path.join(entryDir, fileName))
+}
+
+// Extract the first frame of a video to a PNG. Shared by the upload preview and
+// library thumbnail generation. Resolves true on success, false if no frame was
+// produced (extraction tools name the first frame frame-1.png or frame-0.png).
+async function extractFirstFramePng(videoPath, destPngPath) {
+  const extractFrame = require("ffmpeg-extract-frames")
+  const tmpDir = path.join(
+    UPLOAD_DIR,
+    `tmp_thumb_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+  )
+  makefolder(tmpDir)
+  try {
+    await extractFrame({
+      input: videoPath,
+      output: path.join(tmpDir, "frame-%d.png"),
+      start: 0,
+      count: 1,
+    })
+    const candidate = ["frame-1.png", "frame-0.png"]
+      .map((fileName) => path.join(tmpDir, fileName))
+      .find((framePath) => fs.existsSync(framePath))
+    if (!candidate) return false
+    fs.copyFileSync(candidate, destPngPath)
+    return true
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
 
 let previewCache = null
 let playerProcess = null
 let playerState = "stopped"
 let playerFps = 30
 let playerBrightness = 1
+let playingEntryId = null // library entry currently loaded in the player, if any
 
 function readPlayerFps() {
   const fallbackFps = 30
@@ -89,12 +158,14 @@ function attachPlayerLifecycleHandlers() {
     console.log(`Player stopped (code=${exitCode}, signal=${signal || "none"})`)
     playerProcess = null
     playerState = "stopped"
+    playingEntryId = null
   })
 
   playerProcess.on("error", (spawnError) => {
     console.error(`Player error: ${spawnError.message}`)
     playerProcess = null
     playerState = "stopped"
+    playingEntryId = null
   })
 }
 
@@ -241,11 +312,35 @@ async function startPlayerProcess({
   busPaths = OUTPUT_BIN_BUS,
   fps = null,
   brightness = playerBrightness,
+  entryId = null,
 } = {}) {
   if (!fs.existsSync(PLAYER_BINARY_PATH)) {
     throw new Error(
       "Player binary missing — compile pi_video_player_four_busses first",
     )
+  }
+
+  // Playing a specific library entry: resolve its bus files and fps from meta.
+  let resolvedEntryId = null
+  if (entryId !== null) {
+    const entryBusPaths = resolveEntryBusPaths(entryId)
+    const entryDir = entryDirForId(entryId)
+    if (!entryBusPaths || !entryDir || !fs.existsSync(entryDir)) {
+      throw new Error(`Library entry not found: ${entryId}`)
+    }
+    busPaths = entryBusPaths
+    resolvedEntryId = entryId
+    if (fps === null) {
+      try {
+        const entryMeta = JSON.parse(
+          fs.readFileSync(path.join(entryDir, "meta.json"), "utf8"),
+        )
+        const parsedFps = parseInt(entryMeta.fps, 10)
+        if (Number.isFinite(parsedFps) && parsedFps >= 1) fps = parsedFps
+      } catch {
+        // Fall back to readPlayerFps() below if entry meta is unreadable.
+      }
+    }
   }
 
   if (!busPaths.every((busPath) => fs.existsSync(busPath))) {
@@ -275,6 +370,7 @@ async function startPlayerProcess({
 
   playerState = "running"
   playerFps = renderFps
+  playingEntryId = resolvedEntryId
   attachPlayerLifecycleHandlers()
 
   if (playerProcess.stderr) {
@@ -291,6 +387,7 @@ async function startPlayerProcess({
     fps: playerFps,
     brightness: playerBrightness,
     pid: playerProcess.pid,
+    entryId: playingEntryId,
   }
 }
 
@@ -488,7 +585,13 @@ app.get("/api/renderProgress", (req, res) => {
 
 app.post("/api/player/start", async (req, res) => {
   try {
-    const status = await startPlayerProcess({ brightness: req.body.brightness })
+    const entryId =
+      typeof req.body.id === "string" && req.body.id ? req.body.id : null
+    const status = await startPlayerProcess({
+      brightness: req.body.brightness,
+      entryId,
+      forceRestart: true,
+    })
     res.json({ ok: true, ...status })
   } catch (startError) {
     res.status(400).json({ ok: false, error: startError.message })
@@ -608,6 +711,7 @@ app.get("/api/player/status", (req, res) => {
     fps: playerFps,
     brightness: playerBrightness,
     pid: playerProcess ? playerProcess.pid : null,
+    entryId: playingEntryId,
   })
 })
 
@@ -643,10 +747,24 @@ app.post("/api/renderVideo", async (req, res) => {
     (_, busIndex) => req.body[`coordsBus${busIndex}`],
   )
 
+  // Library entry: each render is saved to its own folder instead of overwriting
+  // the previous one. Name comes from the form, falling back to the video filename.
+  const sourceName = req.files.video.name
+  const entryName =
+    (typeof req.body.name === "string" && req.body.name.trim()) ||
+    path.basename(sourceName, path.extname(sourceName)) ||
+    "render"
+  const entryId = makeEntryId(entryName)
+  const entryDir = path.join(LIBRARY_DIR, entryId)
+  makefolder(entryDir)
+  const entryBusPaths = ENTRY_BUS_FILES.map((fileName) =>
+    path.join(entryDir, fileName),
+  )
+
   renderState = null
   previewCache = null
 
-  res.json({ ok: true, message: "render started" })
+  res.json({ ok: true, message: "render started", id: entryId })
 
   // Process all buses in parallel after responding
   setImmediate(async () => {
@@ -723,27 +841,57 @@ app.post("/api/renderVideo", async (req, res) => {
       await processVideoAllBuses(
         videoPath,
         busCoords,
-        OUTPUT_BIN_BUS,
+        entryBusPaths,
         brightness,
         (current, total) => {
           emitProgress({ current, total, done: false })
         },
       )
 
+      // Persist the library entry: coords snapshot (preserves playback geometry),
+      // a thumbnail, and meta.json describing the render.
+      const busLedCounts = busCoords.map((coords) => coords.length)
+      ENTRY_COORD_FILES.forEach((fileName, busIndex) => {
+        const coordsText = busCoords[busIndex]
+          .map(([x, y]) => `${x} ${y}`)
+          .join("\n")
+        fs.writeFileSync(path.join(entryDir, fileName), coordsText)
+      })
+
+      try {
+        await extractFirstFramePng(videoPath, path.join(entryDir, "thumb.png"))
+      } catch (thumbError) {
+        console.warn(`Could not extract thumbnail: ${thumbError.message}`)
+      }
+
+      let frameCount = 0
+      try {
+        const totalLines = await countLines(entryBusPaths[0])
+        frameCount = Math.max(0, totalLines - 2)
+      } catch {
+        // Leave frameCount at 0 if the bus file can't be read.
+      }
+
+      const entryMeta = {
+        id: entryId,
+        name: entryName,
+        sourceName,
+        createdAt: new Date().toISOString(),
+        fps: renderMeta.fps,
+        frameCount,
+        busLedCounts,
+      }
+      fs.writeFileSync(
+        path.join(entryDir, "meta.json"),
+        JSON.stringify(entryMeta, null, 2),
+      )
+
       emitProgress({
         current: 1,
         total: 1,
         done: true,
-        output: OUTPUT_BIN_BUS[0],
+        id: entryId,
       })
-
-      try {
-        await startPlayerProcess({ forceRestart: true })
-      } catch (playerStartError) {
-        console.warn(
-          `Render finished, but player did not auto-start: ${playerStartError.message}`,
-        )
-      }
     } catch (err) {
       console.error("render error:", err)
       emitProgress({ error: err.message, done: true })
@@ -931,6 +1079,171 @@ app.get("/api/preview/frames", async (req, res) => {
     res.json({ start, frames })
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+
+// ---- Render library ----------------------------------------------------------
+
+function readEntryMeta(entryId) {
+  const entryDir = entryDirForId(entryId)
+  if (!entryDir) return null
+  const metaPath = path.join(entryDir, "meta.json")
+  if (!fs.existsSync(metaPath)) return null
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"))
+    meta.id = entryId // trust the folder name over stored id
+    meta.hasThumb = fs.existsSync(path.join(entryDir, "thumb.png"))
+    return meta
+  } catch {
+    return null
+  }
+}
+
+app.get("/api/library", (req, res) => {
+  try {
+    const entries = fs
+      .readdirSync(LIBRARY_DIR, { withFileTypes: true })
+      .filter((dirent) => dirent.isDirectory())
+      .map((dirent) => readEntryMeta(dirent.name))
+      .filter((meta) => meta !== null)
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    res.json({ entries, playingEntryId })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get("/api/library/:id/thumb", (req, res) => {
+  const entryDir = entryDirForId(req.params.id)
+  if (!entryDir) return res.status(400).json({ error: "invalid id" })
+  const thumbPath = path.join(entryDir, "thumb.png")
+  if (!fs.existsSync(thumbPath)) {
+    return res.status(404).json({ error: "no thumbnail" })
+  }
+  res.sendFile(thumbPath)
+})
+
+app.get("/api/library/:id/export", (req, res) => {
+  const entryId = req.params.id
+  const entryDir = entryDirForId(entryId)
+  if (!entryDir || !fs.existsSync(entryDir)) {
+    return res.status(404).json({ error: "entry not found" })
+  }
+  try {
+    const meta = readEntryMeta(entryId)
+    const zip = new AdmZip()
+    zip.addLocalFolder(entryDir)
+    const downloadName = `${sanitizeNameSlug(meta?.name) || entryId}.zip`
+    res.setHeader("Content-Type", "application/zip")
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${downloadName}"`,
+    )
+    res.send(zip.toBuffer())
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete("/api/library/:id", async (req, res) => {
+  const entryId = req.params.id
+  const entryDir = entryDirForId(entryId)
+  if (!entryDir || !fs.existsSync(entryDir)) {
+    return res.status(404).json({ error: "entry not found" })
+  }
+  try {
+    // If this entry is currently playing, stop the player and blank the LEDs first.
+    if (playingEntryId === entryId) {
+      await stopPlayerProcess("SIGTERM")
+      playerState = "stopped"
+      try {
+        await sendBlackoutFrame()
+      } catch (blackoutError) {
+        console.warn(`Blackout after delete failed: ${blackoutError.message}`)
+      }
+    }
+    fs.rmSync(entryDir, { recursive: true, force: true })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post("/api/library/import", (req, res) => {
+  if (!req.files || !req.files.bundle) {
+    return res.status(400).json({ error: "no zip uploaded (field 'bundle')" })
+  }
+
+  const bundle = req.files.bundle
+  const MAX_BUNDLE_BYTES = 2 * 1024 * 1024 * 1024 // 2 GB guard
+  if (bundle.size > MAX_BUNDLE_BYTES) {
+    return res.status(413).json({ error: "bundle too large" })
+  }
+
+  try {
+    const zip = new AdmZip(bundle.data)
+    const zipEntries = zip.getEntries()
+
+    // Validate: needs all 4 bus files + a parseable meta.json. Entries may sit at
+    // the zip root or under a single top-level folder, so match by basename.
+    const baseNames = new Set(
+      zipEntries.map((zipEntry) => path.basename(zipEntry.entryName)),
+    )
+    const missingBus = ENTRY_BUS_FILES.filter(
+      (fileName) => !baseNames.has(fileName),
+    )
+    if (missingBus.length > 0) {
+      return res.status(400).json({
+        error: `invalid bundle — missing ${missingBus.join(", ")}`,
+      })
+    }
+    const metaEntry = zipEntries.find(
+      (zipEntry) => path.basename(zipEntry.entryName) === "meta.json",
+    )
+    if (!metaEntry) {
+      return res.status(400).json({ error: "invalid bundle — missing meta.json" })
+    }
+
+    let importedMeta
+    try {
+      importedMeta = JSON.parse(metaEntry.getData().toString("utf8"))
+    } catch {
+      return res.status(400).json({ error: "invalid bundle — bad meta.json" })
+    }
+
+    // Re-mint a fresh entry id and flatten files into its folder (drop any
+    // wrapping directory the zip may carry).
+    const newEntryId = makeEntryId(importedMeta.name || "imported")
+    const newEntryDir = path.join(LIBRARY_DIR, newEntryId)
+    makefolder(newEntryDir)
+
+    const allowedFiles = new Set([
+      ...ENTRY_BUS_FILES,
+      ...ENTRY_COORD_FILES,
+      "thumb.png",
+      "meta.json",
+    ])
+    zipEntries.forEach((zipEntry) => {
+      if (zipEntry.isDirectory) return
+      const baseName = path.basename(zipEntry.entryName)
+      if (!allowedFiles.has(baseName)) return // skip anything unexpected
+      fs.writeFileSync(path.join(newEntryDir, baseName), zipEntry.getData())
+    })
+
+    const newMeta = {
+      ...importedMeta,
+      id: newEntryId,
+      createdAt: new Date().toISOString(),
+      importedFrom: importedMeta.id || null,
+    }
+    fs.writeFileSync(
+      path.join(newEntryDir, "meta.json"),
+      JSON.stringify(newMeta, null, 2),
+    )
+
+    res.json({ ok: true, id: newEntryId })
+  } catch (err) {
+    res.status(400).json({ error: `import failed: ${err.message}` })
   }
 })
 

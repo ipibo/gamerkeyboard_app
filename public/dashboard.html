@@ -121,6 +121,104 @@
         color: #fff;
         background: #000;
       }
+      .library-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .library-head strong {
+        font-size: 1rem;
+      }
+      .import-label {
+        font-size: 0.8rem;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+      .import-label input {
+        font-size: 0.75rem;
+      }
+      #library-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        list-style: none;
+      }
+      .library-item {
+        display: grid;
+        grid-template-columns: 56px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid #000;
+        padding: 8px;
+      }
+      .library-item.selected {
+        outline: 2px solid #0000ff;
+      }
+      .library-item img {
+        width: 56px;
+        height: 36px;
+        object-fit: cover;
+        background: #000;
+        border: 1px solid #ccc;
+      }
+      .library-item .thumb-fallback {
+        width: 56px;
+        height: 36px;
+        background: #000;
+      }
+      .library-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+      .library-meta .name {
+        font-weight: bold;
+        font-size: 0.9rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .library-meta .sub {
+        font-size: 0.75rem;
+        color: #666;
+      }
+      .library-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .library-actions button,
+      .library-actions a {
+        padding: 6px 8px;
+        font-size: 0.75rem;
+        text-decoration: none;
+        display: inline-block;
+        border: 1px solid #000;
+      }
+      .library-actions a.export {
+        background: #fff;
+        color: #000;
+      }
+      .library-actions a.export:hover {
+        background: #000;
+        color: #fff;
+      }
+      .library-actions button.delete {
+        background: #fff;
+        color: #cc0000;
+      }
+      .library-actions button.delete:hover {
+        background: #cc0000;
+        color: #fff;
+      }
+      #library-empty {
+        font-size: 0.85rem;
+        color: #666;
+      }
       @media (max-width: 640px) {
         .button-row {
           grid-template-columns: 1fr;
@@ -174,6 +272,21 @@
       </div>
 
       <p id="message"></p>
+    </section>
+
+    <section class="panel">
+      <div class="library-head">
+        <strong>Render Library</strong>
+        <label class="import-label">
+          Import .zip
+          <input type="file" id="import-input" accept=".zip,application/zip" />
+        </label>
+      </div>
+      <p id="library-empty" style="display: none">
+        No renders yet — render a video on the
+        <a href="/upload">Upload</a> page, or import a .zip.
+      </p>
+      <ul id="library-list"></ul>
     </section>
 
     <script src="dashboard.js"></script>
