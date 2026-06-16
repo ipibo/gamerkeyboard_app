@@ -7,6 +7,7 @@ const startButton = document.getElementById("start-btn")
 const stopButton = document.getElementById("stop-btn")
 const pauseButton = document.getElementById("pause-btn")
 const resumeButton = document.getElementById("resume-btn")
+const fadeButton = document.getElementById("fade-btn")
 
 function setMessage(text, type) {
   messageEl.textContent = text || ""
@@ -28,6 +29,7 @@ function updateStatusUi(status) {
   stopButton.disabled = state === "stopped"
   pauseButton.disabled = !isRunning
   resumeButton.disabled = !isPaused
+  fadeButton.disabled = isRunning || isPaused
 }
 
 async function requestJson(url, method) {
@@ -72,6 +74,9 @@ pauseButton.addEventListener("click", () =>
 )
 resumeButton.addEventListener("click", () =>
   runAction("/api/player/resume", "Resume"),
+)
+fadeButton.addEventListener("click", () =>
+  runAction("/api/player/fade", "Fade test"),
 )
 
 refreshStatus()

@@ -285,21 +285,21 @@ form.addEventListener("submit", async (e) => {
     previewState.keyboardOffsets.length > 0 &&
     previewState.layoutKeys.length > 0
   ) {
-    const coordsBus0 = []
-    const coordsBus1 = []
+    const NUM_BUSES = 4
+    const coordsByBus = Array.from({ length: NUM_BUSES }, () => [])
     previewState.keyboardOffsets.forEach(({ offsetX, offsetY }, i) => {
       const keys = previewState.layoutKeys[i] || []
-      const spiBus = previewState.config.keyboards[i]?.spiBus || 0
-      const targetBus = spiBus === 1 ? coordsBus1 : coordsBus0
+      const rawBus = previewState.config.keyboards[i]?.spiBus || 0
+      const spiBus = rawBus >= 0 && rawBus < NUM_BUSES ? rawBus : 0
+      const targetBus = coordsByBus[spiBus]
       keys.forEach(([kx, ky]) => targetBus.push([kx + offsetX, ky + offsetY]))
     })
-    formData.append("coordsBus0", JSON.stringify(coordsBus0))
-    formData.append("coordsBus1", JSON.stringify(coordsBus1))
+    coordsByBus.forEach((busCoords, busIndex) => {
+      formData.append(`coordsBus${busIndex}`, JSON.stringify(busCoords))
+    })
     console.log(
-      "coords override: bus0=",
-      coordsBus0.length,
-      "bus1=",
-      coordsBus1.length,
+      "coords override:",
+      coordsByBus.map((c, i) => `bus${i}=${c.length}`).join(" "),
       "LEDs",
     )
   }
@@ -336,7 +336,7 @@ form.addEventListener("submit", async (e) => {
       progressBar.value = 100
       progressLabel.textContent = "Done"
       resultEl.textContent =
-        "videoFile_bus0.txt + videoFile_bus1.txt written successfully"
+        "videoFile_bus0.txt … videoFile_bus3.txt written successfully"
       resultEl.className = "ok"
       sse.close()
       setRenderButtonState(false)

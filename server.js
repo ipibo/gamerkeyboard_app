@@ -14,14 +14,17 @@ const LAYOUTS_DIR = path.join(__dirname, "layouts")
 const OUTPUT_DIR = path.join(__dirname, "output")
 const UPLOAD_DIR = path.join(__dirname, "upload")
 const COORDS_PATH = path.join(OUTPUT_DIR, "coords.txt")
-const COORDS_BUS0 = path.join(OUTPUT_DIR, "coords_bus0.txt")
-const COORDS_BUS1 = path.join(OUTPUT_DIR, "coords_bus1.txt")
+const NUM_BUSES = 4
+const COORDS_BUS = Array.from({ length: NUM_BUSES }, (_, busIndex) =>
+  path.join(OUTPUT_DIR, `coords_bus${busIndex}.txt`),
+)
 const OUTPUT_BIN = path.join(OUTPUT_DIR, "videoFile.txt")
-const OUTPUT_BIN_BUS0 = path.join(OUTPUT_DIR, "videoFile_bus0.txt")
-const OUTPUT_BIN_BUS1 = path.join(OUTPUT_DIR, "videoFile_bus1.txt")
+const OUTPUT_BIN_BUS = Array.from({ length: NUM_BUSES }, (_, busIndex) =>
+  path.join(OUTPUT_DIR, `videoFile_bus${busIndex}.txt`),
+)
 const META_PATH = path.join(OUTPUT_DIR, "meta.json")
 const LAYOUT_CONFIG_PATH = path.join(OUTPUT_DIR, "layoutConfig.json")
-const PLAYER_BINARY_PATH = path.join(__dirname, "pi_video_player_two_busses")
+const PLAYER_BINARY_PATH = path.join(__dirname, "pi_video_player_four_busses")
 
 function makefolder(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -119,6 +122,18 @@ function countCoordsLines(filePath) {
   return raw.split("\n").filter((line) => line.trim() !== "").length
 }
 
+// LED count for a bus, with legacy fallback: bus 0 reads combined coords.txt
+// when the per-bus file is absent (old layouts saved before the bus split).
+function countBusLedCount(busIndex) {
+  if (fs.existsSync(COORDS_BUS[busIndex])) {
+    return countCoordsLines(COORDS_BUS[busIndex])
+  }
+  if (busIndex === 0) {
+    return countCoordsLines(COORDS_PATH)
+  }
+  return 0
+}
+
 function buildBlackoutFileContent(ledCount) {
   const startFrame = "0".repeat(32)
   const endFrame = "1".repeat(32)
@@ -131,38 +146,51 @@ function buildBlackoutFileContent(ledCount) {
   return `${startFrame}\n${blackFrame}\n${endFrame}\n`
 }
 
+// Builds a test "video": 256 frames ramping every LED from black (0,0,0)
+// to white (255,255,255). Global brightness byte uses full 0b11111111 (max)
+// so the fade is clearly visible. Channel order matches the player: B, G, R.
+function buildFadeFileContent(ledCount) {
+  const startFrame = "0".repeat(32)
+  const endFrame = "1".repeat(32)
+  if (ledCount < 1) {
+    return `${startFrame}\n${endFrame}\n`
+  }
+
+  const globalBits = "11111111"
+  const frameLines = []
+  for (let value = 0; value <= 255; value++) {
+    const channelBits = value.toString(2).padStart(8, "0")
+    const ledBits = globalBits + channelBits + channelBits + channelBits
+    frameLines.push(ledBits.repeat(ledCount))
+  }
+  return `${startFrame}\n${frameLines.join("\n")}\n${endFrame}\n`
+}
+
 function sendBlackoutFrame() {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(PLAYER_BINARY_PATH)) {
       reject(
         new Error(
-          "Player binary missing — compile pi_video_player_two_busses first",
+          "Player binary missing — compile pi_video_player_four_busses first",
         ),
       )
       return
     }
 
-    if (!fs.existsSync(OUTPUT_BIN_BUS0) || !fs.existsSync(OUTPUT_BIN_BUS1)) {
+    if (!OUTPUT_BIN_BUS.every((busPath) => fs.existsSync(busPath))) {
       reject(new Error("Rendered bus files missing — render a video first"))
       return
     }
 
-    const ledCountBus0 = fs.existsSync(COORDS_BUS0)
-      ? countCoordsLines(COORDS_BUS0)
-      : countCoordsLines(COORDS_PATH)
-    const ledCountBus1 = countCoordsLines(COORDS_BUS1)
-
-    const blackoutBus0Path = path.join(OUTPUT_DIR, "blackout_bus0.txt")
-    const blackoutBus1Path = path.join(OUTPUT_DIR, "blackout_bus1.txt")
-    fs.writeFileSync(blackoutBus0Path, buildBlackoutFileContent(ledCountBus0))
-    fs.writeFileSync(blackoutBus1Path, buildBlackoutFileContent(ledCountBus1))
+    const blackoutPaths = OUTPUT_BIN_BUS.map((_, busIndex) => {
+      const ledCount = countBusLedCount(busIndex)
+      const blackoutPath = path.join(OUTPUT_DIR, `blackout_bus${busIndex}.txt`)
+      fs.writeFileSync(blackoutPath, buildBlackoutFileContent(ledCount))
+      return blackoutPath
+    })
 
     const blackoutFps = Math.max(30, readPlayerFps())
-    const blackoutArgs = [
-      blackoutBus0Path,
-      blackoutBus1Path,
-      String(blackoutFps),
-    ]
+    const blackoutArgs = [...blackoutPaths, String(blackoutFps)]
 
     const blackoutProcess = spawn(PLAYER_BINARY_PATH, blackoutArgs, {
       cwd: __dirname,
@@ -207,14 +235,18 @@ function sendBlackoutFrame() {
   })
 }
 
-async function startPlayerProcess({ forceRestart = false } = {}) {
+async function startPlayerProcess({
+  forceRestart = false,
+  busPaths = OUTPUT_BIN_BUS,
+  fps = null,
+} = {}) {
   if (!fs.existsSync(PLAYER_BINARY_PATH)) {
     throw new Error(
-      "Player binary missing — compile pi_video_player_two_busses first",
+      "Player binary missing — compile pi_video_player_four_busses first",
     )
   }
 
-  if (!fs.existsSync(OUTPUT_BIN_BUS0) || !fs.existsSync(OUTPUT_BIN_BUS1)) {
+  if (!busPaths.every((busPath) => fs.existsSync(busPath))) {
     throw new Error("Rendered bus files missing — render a video first")
   }
 
@@ -225,8 +257,8 @@ async function startPlayerProcess({ forceRestart = false } = {}) {
     await stopPlayerProcess("SIGTERM")
   }
 
-  const renderFps = readPlayerFps()
-  const args = [OUTPUT_BIN_BUS0, OUTPUT_BIN_BUS1, String(renderFps)]
+  const renderFps = fps !== null ? fps : readPlayerFps()
+  const args = [...busPaths, String(renderFps)]
   playerProcess = spawn(PLAYER_BINARY_PATH, args, {
     cwd: __dirname,
     stdio: ["ignore", "ignore", "pipe"],
@@ -334,8 +366,7 @@ app.post("/api/saveLayout", (req, res) => {
     return res.status(400).json({ error: "coords must be array" })
 
   // Split flat coords array into per-bus arrays using layout key counts
-  const coordsBus0 = []
-  const coordsBus1 = []
+  const coordsByBus = Array.from({ length: NUM_BUSES }, () => [])
   let coordIndex = 0
   if (Array.isArray(keyboards)) {
     keyboards.forEach((kbData) => {
@@ -347,7 +378,13 @@ app.post("/api/saveLayout", (req, res) => {
       } catch {
         // Unknown layout — skip its coords
       }
-      const busCoords = kbData.spiBus === 1 ? coordsBus1 : coordsBus0
+      const busIndex =
+        Number.isInteger(kbData.spiBus) &&
+        kbData.spiBus >= 0 &&
+        kbData.spiBus < NUM_BUSES
+          ? kbData.spiBus
+          : 0
+      const busCoords = coordsByBus[busIndex]
       for (
         let ledIndex = 0;
         ledIndex < keyCount && coordIndex < coords.length;
@@ -359,18 +396,17 @@ app.post("/api/saveLayout", (req, res) => {
   }
   // Any remaining coords fall to bus 0
   while (coordIndex < coords.length) {
-    coordsBus0.push(coords[coordIndex++])
+    coordsByBus[0].push(coords[coordIndex++])
   }
 
-  const bus0Lines = coordsBus0.map(([x, y]) => `${x} ${y}`).join("\n")
-  const bus1Lines = coordsBus1.map(([x, y]) => `${x} ${y}`).join("\n")
-  const combinedLines = [...coordsBus0, ...coordsBus1]
-    .map(([x, y]) => `${x} ${y}`)
-    .join("\n")
+  const formatCoords = (busCoords) =>
+    busCoords.map(([x, y]) => `${x} ${y}`).join("\n")
+  const combinedLines = formatCoords(coordsByBus.flat())
 
   try {
-    fs.writeFileSync(COORDS_BUS0, bus0Lines)
-    fs.writeFileSync(COORDS_BUS1, bus1Lines)
+    coordsByBus.forEach((busCoords, busIndex) => {
+      fs.writeFileSync(COORDS_BUS[busIndex], formatCoords(busCoords))
+    })
     fs.writeFileSync(COORDS_PATH, combinedLines)
 
     const config = {
@@ -502,6 +538,36 @@ app.post("/api/player/black", async (req, res) => {
   }
 })
 
+app.post("/api/player/fade", async (req, res) => {
+  try {
+    const ledCounts = OUTPUT_BIN_BUS.map((_, busIndex) =>
+      countBusLedCount(busIndex),
+    )
+
+    if (ledCounts.every((ledCount) => ledCount < 1)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "No coords saved — set up a layout first" })
+    }
+
+    const fadePaths = ledCounts.map((ledCount, busIndex) => {
+      const fadePath = path.join(OUTPUT_DIR, `fade_bus${busIndex}.txt`)
+      fs.writeFileSync(fadePath, buildFadeFileContent(ledCount))
+      return fadePath
+    })
+
+    // 60 fps -> ~4.3 s per 0->255 ramp; player loops the file, so it repeats.
+    const status = await startPlayerProcess({
+      forceRestart: true,
+      busPaths: fadePaths,
+      fps: 60,
+    })
+    res.json({ ok: true, ...status })
+  } catch (fadeError) {
+    res.status(400).json({ ok: false, error: fadeError.message })
+  }
+})
+
 app.post("/api/player/pause", (req, res) => {
   if (!playerProcess || playerState !== "running") {
     return res.status(400).json({ ok: false, error: "Player is not running" })
@@ -544,7 +610,7 @@ app.post("/api/renderVideo", async (req, res) => {
   const hasCoordOverride = req.body.coordsBus0 !== undefined
   if (
     !hasCoordOverride &&
-    !fs.existsSync(COORDS_BUS0) &&
+    !fs.existsSync(COORDS_BUS[0]) &&
     !fs.existsSync(COORDS_PATH)
   ) {
     return res
@@ -557,16 +623,17 @@ app.post("/api/renderVideo", async (req, res) => {
   const videoPath = path.join(UPLOAD_DIR, `video${ext}`)
   await req.files.video.mv(videoPath)
 
-  // Capture body fields now (before setImmediate)
-  const coordsBus0Body = req.body.coordsBus0
-  const coordsBus1Body = req.body.coordsBus1
+  // Capture per-bus coord override fields now (before setImmediate)
+  const coordsBusBody = OUTPUT_BIN_BUS.map(
+    (_, busIndex) => req.body[`coordsBus${busIndex}`],
+  )
 
   renderState = null
   previewCache = null
 
   res.json({ ok: true, message: "render started" })
 
-  // Process both buses in parallel after responding
+  // Process all buses in parallel after responding
   setImmediate(async () => {
     try {
       emitProgress({ current: 0, total: 0, done: false })
@@ -575,12 +642,15 @@ app.post("/api/renderVideo", async (req, res) => {
       playerFps = renderMeta.fps
 
       // Resolve LED coordinates: preview-adjusted coords take priority over saved files
-      let bus0Coords, bus1Coords
-      if (coordsBus0Body !== undefined) {
-        bus0Coords = JSON.parse(coordsBus0Body)
-        bus1Coords = coordsBus1Body ? JSON.parse(coordsBus1Body) : []
+      let busCoords
+      if (coordsBusBody[0] !== undefined) {
+        busCoords = coordsBusBody.map((body) =>
+          body ? JSON.parse(body) : [],
+        )
         console.log(
-          `Using preview-adjusted coords: bus0=${bus0Coords.length} bus1=${bus1Coords.length} LEDs`,
+          `Using preview-adjusted coords: ${busCoords
+            .map((c, i) => `bus${i}=${c.length}`)
+            .join(" ")} LEDs`,
         )
       } else {
         // Read saved coord files and scale from canvas space to video pixel space
@@ -615,73 +685,58 @@ app.post("/api/renderVideo", async (req, res) => {
           )
         }
 
-        const rawBus0 = fs.existsSync(COORDS_BUS0)
-          ? readCoordsFile(COORDS_BUS0)
-          : readCoordsFile(COORDS_PATH)
-        const rawBus1 = readCoordsFile(COORDS_BUS1)
-
-        bus0Coords = scaleCoords(
-          rawBus0,
-          canvasWidth,
-          canvasHeight,
-          videoWidth,
-          videoHeight,
-        )
-        bus1Coords = scaleCoords(
-          rawBus1,
-          canvasWidth,
-          canvasHeight,
-          videoWidth,
-          videoHeight,
-        )
+        busCoords = COORDS_BUS.map((busPath, busIndex) => {
+          const raw =
+            busIndex === 0 && !fs.existsSync(busPath)
+              ? readCoordsFile(COORDS_PATH)
+              : readCoordsFile(busPath)
+          return scaleCoords(
+            raw,
+            canvasWidth,
+            canvasHeight,
+            videoWidth,
+            videoHeight,
+          )
+        })
         console.log(
-          `Using saved coords (scaled ${canvasWidth}x${canvasHeight} → ${videoWidth}x${videoHeight}): bus0=${bus0Coords.length} bus1=${bus1Coords.length} LEDs`,
+          `Using saved coords (scaled ${canvasWidth}x${canvasHeight} → ${videoWidth}x${videoHeight}): ${busCoords
+            .map((c, i) => `bus${i}=${c.length}`)
+            .join(" ")} LEDs`,
         )
       }
 
-      let bus0Current = 0
-      let bus0Total = 0
-      let bus1Current = 0
-      let bus1Total = 0
+      const busCurrent = busCoords.map(() => 0)
+      const busTotal = busCoords.map(() => 0)
 
       function emitMergedProgress() {
         emitProgress({
-          current: bus0Current + bus1Current,
-          total: bus0Total + bus1Total,
+          current: busCurrent.reduce((sum, value) => sum + value, 0),
+          total: busTotal.reduce((sum, value) => sum + value, 0),
           done: false,
         })
       }
 
-      await Promise.all([
-        processVideo(
-          videoPath,
-          bus0Coords,
-          OUTPUT_BIN_BUS0,
-          brightness,
-          (current, total) => {
-            bus0Current = current
-            bus0Total = total
-            emitMergedProgress()
-          },
+      await Promise.all(
+        busCoords.map((coords, busIndex) =>
+          processVideo(
+            videoPath,
+            coords,
+            OUTPUT_BIN_BUS[busIndex],
+            brightness,
+            (current, total) => {
+              busCurrent[busIndex] = current
+              busTotal[busIndex] = total
+              emitMergedProgress()
+            },
+          ),
         ),
-        processVideo(
-          videoPath,
-          bus1Coords,
-          OUTPUT_BIN_BUS1,
-          brightness,
-          (current, total) => {
-            bus1Current = current
-            bus1Total = total
-            emitMergedProgress()
-          },
-        ),
-      ])
+      )
 
       emitProgress({
         current: 1,
         total: 1,
         done: true,
-        output: OUTPUT_BIN_BUS0,
+        output: OUTPUT_BIN_BUS[0],
       })
 
       try {
@@ -760,8 +815,8 @@ function parseCoordsFile(filePath) {
 
 app.get("/api/preview/info", async (req, res) => {
   try {
-    const hasBusLayout = fs.existsSync(COORDS_BUS0)
-    const hasBusRender = fs.existsSync(OUTPUT_BIN_BUS0)
+    const hasBusLayout = fs.existsSync(COORDS_BUS[0])
+    const hasBusRender = fs.existsSync(OUTPUT_BIN_BUS[0])
 
     if (!hasBusLayout && !fs.existsSync(COORDS_PATH))
       return res.json({
@@ -772,9 +827,9 @@ app.get("/api/preview/info", async (req, res) => {
       return res.json({ ready: false, reason: "No video rendered yet" })
 
     if (hasBusRender) {
-      // Dual-bus mode: read per-bus coord and video files
-      const bus0CoordsStat = fs.statSync(COORDS_BUS0)
-      const bus0VideoStat = fs.statSync(OUTPUT_BIN_BUS0)
+      // Multi-bus mode: read per-bus coord and video files
+      const bus0CoordsStat = fs.statSync(COORDS_BUS[0])
+      const bus0VideoStat = fs.statSync(OUTPUT_BIN_BUS[0])
       if (
         previewCache &&
         previewCache.dualBusMode &&
@@ -784,12 +839,11 @@ app.get("/api/preview/info", async (req, res) => {
         return res.json({ ready: true, ...previewCache })
       }
 
-      const bus0Coords = parseCoordsFile(COORDS_BUS0)
-      const bus1Coords = fs.existsSync(COORDS_BUS1)
-        ? parseCoordsFile(COORDS_BUS1)
-        : []
-      const coords = [...bus0Coords, ...bus1Coords]
-      const totalLines = await countLines(OUTPUT_BIN_BUS0)
+      const busCoords = COORDS_BUS.map((busPath) =>
+        fs.existsSync(busPath) ? parseCoordsFile(busPath) : [],
+      )
+      const coords = busCoords.flat()
+      const totalLines = await countLines(OUTPUT_BIN_BUS[0])
       const frameCount = Math.max(0, totalLines - 2)
 
       previewCache = {
@@ -797,8 +851,7 @@ app.get("/api/preview/info", async (req, res) => {
         coords,
         frameCount,
         ledCount: coords.length,
-        bus0LedCount: bus0Coords.length,
-        bus1LedCount: bus1Coords.length,
+        busLedCounts: busCoords.map((c) => c.length),
         coordsMtime: bus0CoordsStat.mtimeMs,
         videoMtime: bus0VideoStat.mtimeMs,
       }
@@ -841,32 +894,37 @@ app.get("/api/preview/frames", async (req, res) => {
     const count = Math.min(100, Math.max(1, parseInt(req.query.count) || 50))
 
     if (!previewCache) {
-      if (!fs.existsSync(OUTPUT_BIN_BUS0) && !fs.existsSync(OUTPUT_BIN))
+      if (!fs.existsSync(OUTPUT_BIN_BUS[0]) && !fs.existsSync(OUTPUT_BIN))
         return res.status(404).json({ error: "video not rendered" })
       return res.status(400).json({ error: "call /api/preview/info first" })
     }
 
-    const { ledCount, frameCount, dualBusMode, bus0LedCount, bus1LedCount } =
-      previewCache
+    const { ledCount, frameCount, dualBusMode, busLedCounts } = previewCache
     if (!ledCount) return res.json({ start, frames: [] })
 
     const clampedCount = Math.min(count, frameCount - start)
     if (clampedCount <= 0) return res.json({ start, frames: [] })
 
     if (dualBusMode) {
-      const [bus0Lines, bus1Lines] = await Promise.all([
-        readFrameLines(OUTPUT_BIN_BUS0, start + 1, clampedCount),
-        bus1LedCount > 0
-          ? readFrameLines(OUTPUT_BIN_BUS1, start + 1, clampedCount)
-          : Promise.resolve([]),
-      ])
-      const frames = bus0Lines.map((bus0Line, frameIndex) => {
-        const bus0Rgb = decodeFrame(bus0Line, bus0LedCount)
-        const bus1Rgb = bus1Lines[frameIndex]
-          ? decodeFrame(bus1Lines[frameIndex], bus1LedCount)
-          : []
-        return [...bus0Rgb, ...bus1Rgb]
-      })
+      // Read each bus's frame lines in parallel, then concat per-bus RGB in bus order
+      const busLineSets = await Promise.all(
+        busLedCounts.map((ledCountForBus, busIndex) =>
+          ledCountForBus > 0
+            ? readFrameLines(OUTPUT_BIN_BUS[busIndex], start + 1, clampedCount)
+            : Promise.resolve([]),
+        ),
+      )
+      const frames = []
+      for (let frameIndex = 0; frameIndex < clampedCount; frameIndex++) {
+        const mergedRgb = []
+        busLedCounts.forEach((ledCountForBus, busIndex) => {
+          const line = busLineSets[busIndex][frameIndex]
+          if (line && ledCountForBus > 0) {
+            mergedRgb.push(...decodeFrame(line, ledCountForBus))
+          }
+        })
+        frames.push(mergedRgb)
+      }
       return res.json({ start, frames })
     }
 

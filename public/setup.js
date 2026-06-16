@@ -31,8 +31,10 @@ let connectTo = null // index being connected TO (preview)
 
 const KEY_RADIUS = 5
 const BUS_COLORS = {
-  0: ["#f2c841", "#f28b41", "#f26841", "#f2414e", "#f2a841"],
-  1: ["#41a0f2", "#4169f2", "#9c41f2", "#41d4f2", "#41f2c8"],
+  0: ["#f2c841", "#f28b41", "#f26841", "#f2414e", "#f2a841"], // yellow/orange
+  1: ["#41a0f2", "#4169f2", "#9c41f2", "#41d4f2", "#41f2c8"], // blue/purple
+  2: ["#41f25e", "#5ef241", "#8bf241", "#41f28b", "#b6f241"], // green
+  3: ["#f241d4", "#f2419c", "#f24168", "#d441f2", "#f241b6"], // magenta/pink
 }
 
 function setStatus(msg, isError) {
