@@ -325,8 +325,8 @@ form.addEventListener("submit", async (e) => {
     if (data.done) {
       progressBar.value = 100
       progressLabel.textContent = "Done"
-      resultEl.textContent =
-        "videoFile_bus0.txt … videoFile_bus3.txt written successfully"
+      resultEl.innerHTML =
+        'Saved to library — open the <a href="/dashboard">Player Dashboard</a> to play it.'
       resultEl.className = "ok"
       sse.close()
       setRenderButtonState(false)

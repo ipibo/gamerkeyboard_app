@@ -181,12 +181,21 @@
       <div class="card">
         <form id="upload-form" enctype="multipart/form-data">
           <label>
+            Render name
+            <input
+              type="text"
+              name="name"
+              placeholder="e.g. Sunset loop"
+              maxlength="60"
+            />
+          </label>
+          <label>
             Video file
             <input type="file" name="video" accept="video/*" required />
           </label>
           <p class="render-note">
-            Rendered at minimum brightness. Set live brightness in the
-            <a href="/dashboard">Player Dashboard</a>.
+            Saved to the library at minimum brightness. Play it and set live
+            brightness in the <a href="/dashboard">Player Dashboard</a>.
           </p>
           <button type="submit">Render</button>
           <span id="render-hint">Preview required before rendering</span>
