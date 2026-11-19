@@ -1,0 +1,17 @@
+[Unit]
+Description=RGB keyboard Node server (dashboard + player control)
+After=network.target
+
+[Service]
+Type=simple
+User=keyboard
+WorkingDirectory=/home/keyboard/gamerkeyboard_app
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=3
+# On shutdown: SIGTERM reaches node and the player child; the player sends a
+# black frame before exiting.
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

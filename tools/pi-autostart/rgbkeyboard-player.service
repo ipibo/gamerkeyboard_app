@@ -1,0 +1,16 @@
+[Unit]
+Description=Start LED video playback once the RGB keyboard server is up
+After=rgbkeyboard-server.service
+Requires=rgbkeyboard-server.service
+
+[Service]
+Type=oneshot
+User=keyboard
+# Playback brightness 1..31 (1 = server default, very dim).
+Environment=BOOT_BRIGHTNESS=1
+# Optional library entry id to play; empty = output/videoFile_bus*.txt
+Environment=BOOT_ENTRY_ID=
+ExecStart=/home/keyboard/gamerkeyboard_app/tools/pi-autostart/start-player-on-boot.sh
+
+[Install]
+WantedBy=multi-user.target
